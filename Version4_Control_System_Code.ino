@@ -1,4 +1,4 @@
-// Global State Variables
+// Pin Assignments
 #define MANUAL_STOP_RECIRCULATION D2
 #define DISTRIBUTION_PRESSURE_SWITCH D3
 #define MANUAL_PRIME_DISTRIBUTION_PUMP D4
@@ -23,6 +23,8 @@
 #define RECIRCULATION_VALVE_RELAY D26
 #define PURGE_VALVE_RELAY D27
 #define UV_LIGHT_RELAY D28
+
+// Global State Variables
 
 volatile bool recirculationValveOpen = false;
 volatile bool purgeValveOpen = false;
