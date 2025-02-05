@@ -24,6 +24,10 @@
 #define PURGE_VALVE_RELAY D27
 #define UV_LIGHT_RELAY D28
 
+// Constants
+
+#define RECIRCULATION_MODE_TIMEOUT 1380000 // 23 minutes
+
 // Global State Variables
 
 volatile bool recirculationValveOpen = false;
@@ -39,6 +43,22 @@ volatile bool recirculationModePending = false;
 volatile bool recirculationModeBlockTransferPump = false;
 volatile unsigned long recirculationModeTimeOfRequestedAction = 0;
 volatile unsigned long recirculationModeRunTime = 0;
+
+// Global State Variables for Control Modes
+volatile bool transferPumpModeNormal = false;
+volatile bool transferPumpModeDisabled = false;
+volatile bool transferPumpModeManual = false;
+
+volatile bool distributionPumpModeNormal = false;
+volatile bool distributionPumpModeDisabled = false;
+volatile bool distributionPumpModeManual = false;
+
+volatile bool recirculationFunctionNormal = false;
+volatile bool recirculationFunctionDisabled = false;
+
+volatile bool sedimentScreenPurgeNormal = false;
+volatile bool sedimentScreenPurgeDisabled = false;
+volatile bool sedimentScreenPurgeManual = false;
 
 
 void setup() {
@@ -95,8 +115,34 @@ void setup() {
     display.print("System Ready");
     display.display();
 
-} // End of Setup()
+} /* ______________________________________________________________ End of Setup() ___________________________________________________________________ */
 
+void readControlStates() {
+    // Read Transfer Pump Mode Switch
+    int transferPumpMode = digitalRead(TRANSFER_PUMP_MODE_NORMAL);
+    int transferPumpModeManualPin = digitalRead(TRANSFER_PUMP_MODE_MANUAL);
+    
+    transferPumpModeNormal = (transferPumpMode == HIGH && transferPumpModeManualPin == LOW);
+    transferPumpModeDisabled = (transferPumpMode == LOW && transferPumpModeManualPin == LOW);
+    transferPumpModeManual = (transferPumpModeManualPin == HIGH);
+
+    // Read Distribution Pump Mode Switch
+    int distributionPumpModeNormalPin = digitalRead(DISTRIBUTION_PUMP_MODE_NORMAL);
+    int distributionPumpModeManualPin = digitalRead(DISTRIBUTION_PUMP_MODE_MANUAL);
+    
+    distributionPumpModeNormal = (distributionPumpModeNormalPin == HIGH);
+    distributionPumpModeDisabled = (distributionPumpModeNormalPin == LOW && distributionPumpModeManualPin == LOW);
+    distributionPumpModeManual = (distributionPumpModeManualPin == HIGH);
+
+    // Read Recirculation Function Switch
+    int recirculationFunctionNormalPin = digitalRead(RECIRCULATION_FUNCTION_ENABLE);
+    recirculationFunctionNormal = (recirculationFunctionNormalPin == HIGH);
+    recirculationFunctionDisabled = (recirculationFunctionNormalPin == LOW);
+
+    // Read Sediment Screen Purge Function Switch
+    int sedimentScreenPurgeNormalPin = digitalRead(SEDIMENT_PURGE_FUNCTION_NORMAL);
+    sedimentScreenPurgeNormal = (sedimentScreenPurgeNormalPin == HIGH);
+    sedimentScreenPurgeDisabled = (sedimentScreenPurgeNormalPin == LOW);
 
 void dryRunCutoffTransferPump() {
     if (digitalRead(ACCUMULATOR_LOWER_FLOAT) == HIGH) {
@@ -247,6 +293,10 @@ void updateDisplay() {
 }
 
 void loop() {
+
+    // Read control states
+    readControlStates();
+    
     // Call to check float sensors
     checkFloatSensors();
 
