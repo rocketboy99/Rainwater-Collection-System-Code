@@ -28,10 +28,12 @@
 
 #define RECIRCULATION_MODE_TIMEOUT 1380000 // 23 minutes
 #define valve_operation_time 6000 //6 seconds
-#define pump_stop_delay 500 // 1/2 second
+#define pump_stop_delay 500 // 0.5 second
+#define uv_light_delay 2500 // 2.5 second
 
 // Global State Variables
 
+volatile bool UVlightActive = false;
 volatile bool recirculationValveOpen = false;
 volatile bool purgeValveOpen = false;
 volatile bool recirculationActive = false;
@@ -171,6 +173,33 @@ void dryRunCutoffDistributionPump() {
         display.display();
     }
 }
+
+void stopUVLight() {
+    digitalWrite(UV_LIGHT_RELAY, LOW);
+    UVlightActive = false;
+    Serial.println("UV Light Stopped");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("UV Light Off");
+    display.display();
+ }
+
+void startUVLight() {
+  digitalWrite(UV_LIGHT_RELAY, HIGH);
+  Serial.println("Starting UV Light");
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("Starting UV Light");
+  display.display();
+  wait(uv_light_delay);
+  UVlightActive = true;
+  Serial.println("UV Light Started");
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("UV Light On");
+  display.display();
+}
+
 
 void openRecirculationValve() {
     digitalWrite(RECIRCULATION_VALVE_RELAY, HIGH);
