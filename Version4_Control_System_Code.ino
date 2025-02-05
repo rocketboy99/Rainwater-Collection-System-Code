@@ -27,6 +27,8 @@
 // Constants
 
 #define RECIRCULATION_MODE_TIMEOUT 1380000 // 23 minutes
+#define valve_operation_time 6000 //6 seconds
+#define pump_stop_delay 500 // 1/2 second
 
 // Global State Variables
 
@@ -147,6 +149,7 @@ void readControlStates() {
 void dryRunCutoffTransferPump() {
     if (digitalRead(ACCUMULATOR_LOWER_FLOAT) == HIGH) {
         digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+         wait(pump_stop_delay);
         transferPumpDryRun = true;
         Serial.println("Transfer Pump Dry Run Cutoff Triggered");
         display.clearDisplay();
@@ -159,6 +162,7 @@ void dryRunCutoffTransferPump() {
 void dryRunCutoffDistributionPump() {
     if (digitalRead(STORAGE_LOWER_FLOAT) == HIGH) {
         digitalWrite(DISTRIBUTION_PUMP_RELAY, LOW);
+         wait(pump_stop_delay);
         distributionPumpDryRun = true;
         Serial.println("Distribution Pump Dry Run Cutoff Triggered");
         display.clearDisplay();
@@ -175,7 +179,7 @@ void openRecirculationValve() {
     display.setCursor(0, 0);
     display.print("Opening Recir. Valve...");
     display.display();
-    wait(6000);
+    wait(valve_operation_time);
     recirculationValveOpen = true;
     Serial.println("Recirculation Valve Open");
     display.clearDisplay();
@@ -191,7 +195,7 @@ void closeRecirculationValve() {
     display.setCursor(0, 0);
     display.print("Closing Recir. Valve...");
     display.display();
-    wait(6000);
+    wait(valve_operation_time);
     recirculationValveOpen = false;
     Serial.println("Recirculation Valve Closed");
     display.clearDisplay();
@@ -207,7 +211,7 @@ void openPurgeValve() {
     display.setCursor(0, 0);
     display.print("Opening Purge. Valve...");
     display.display();
-    wait(6000);
+    wait(valve_operation_time);
     purgeValveOpen = true;
     Serial.println("Purge Valve Open");
     display.clearDisplay();
@@ -223,7 +227,7 @@ void closePurgeValve() {
     display.setCursor(0, 0);
     display.print("Closing Purge. Valve...");
     display.display();
-    wait(6000);
+    wait(valve_operation_time);
     purgeValveOpen = false;
     Serial.println("Purge Valve Closed");
     display.clearDisplay();
@@ -235,18 +239,18 @@ void closePurgeValve() {
 void stopTransferPump() {
     digitalWrite(TRANSFER_PUMP_RELAY, LOW);
     transferPumpActive = false;
+     wait(pump_stop_delay);
     Serial.println("Transfer Pump Stopped");
     display.clearDisplay();
     display.setCursor(0, 0);
     display.print("Transfer Pump Off");
     display.display();
-    wait(500);
+    wait(pump_stop_delay);
 }
 
 void startTransferPump() {
     if(recirculationValveOpen == true){
-      closeRecirculationValve() //IF THE RECIRCULATION VALVE IS OPEN, SEND CLOSE SIGNAL AND WAIT 6 SECONDS
-      wait(6000);
+      closeRecirculationValve() //IF THE RECIRCULATION VALVE IS OPEN, CLOSE IT
     }
   digitalWrite(TRANSFER_PUMP_RELAY, HIGH);
   transferPumpActive = true;
