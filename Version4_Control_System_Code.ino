@@ -34,6 +34,12 @@ volatile bool autoExitTriggered = false;
 volatile bool transferPumpDryRun = false;
 volatile bool distributionPumpDryRun = false;
 volatile bool transferPumpActive = false;
+volatile bool recirculationModeActive = false;
+volatile bool recirculationModePending = false;
+volatile bool recirculationModeBlockTransferPump = false;
+volatile unsigned long recirculationModeTimeOfRequestedAction = 0;
+volatile unsigned long recirculationModeRunTime = 0;
+
 
 void setup() {
     Serial.begin(115200);
@@ -89,7 +95,8 @@ void setup() {
     display.print("System Ready");
     display.display();
 
-}
+} // End of Setup()
+
 
 void dryRunCutoffTransferPump() {
     if (digitalRead(ACCUMULATOR_LOWER_FLOAT) == HIGH) {
@@ -117,6 +124,12 @@ void dryRunCutoffDistributionPump() {
 
 void openRecirculationValve() {
     digitalWrite(RECIRCULATION_VALVE_RELAY, HIGH);
+    Serial.println("Opening Recirculation Valve...");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Opening Recir. Valve...");
+    display.display();
+    wait(6000);
     recirculationValveOpen = true;
     Serial.println("Recirculation Valve Open");
     display.clearDisplay();
@@ -127,16 +140,28 @@ void openRecirculationValve() {
 
 void closeRecirculationValve() {
     digitalWrite(RECIRCULATION_VALVE_RELAY, LOW);
-    recirculationValveOpen = false;
-    Serial.println("Recirculation Valve Close");
+    Serial.println("Closing Recirculation Valve...");
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.print("Recirc Valve Close");
+    display.print("Closing Recir. Valve...");
+    display.display();
+    wait(6000);
+    recirculationValveOpen = false;
+    Serial.println("Recirculation Valve Closed");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Recirc Valve Closed");
     display.display();
 }
 
 void openPurgeValve() {
     digitalWrite(PURGE_VALVE_RELAY, HIGH);
+    Serial.println("Opening Purge Valve...");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Opening Purge. Valve...");
+    display.display();
+    wait(6000);
     purgeValveOpen = true;
     Serial.println("Purge Valve Open");
     display.clearDisplay();
@@ -147,11 +172,17 @@ void openPurgeValve() {
 
 void closePurgeValve() {
     digitalWrite(PURGE_VALVE_RELAY, LOW);
-    purgeValveOpen = false;
-    Serial.println("Purge Valve Close");
+    Serial.println("Closing Purge Valve...");
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.print("Purge Valve Close");
+    display.print("Closing Purge. Valve...");
+    display.display();
+    wait(6000);
+    purgeValveOpen = false;
+    Serial.println("Purge Valve Closed");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Purge Valve Closed");
     display.display();
 }
 
@@ -163,6 +194,7 @@ void stopTransferPump() {
     display.setCursor(0, 0);
     display.print("Transfer Pump Off");
     display.display();
+    wait(500);
 }
 
 void startTransferPump() {
@@ -179,3 +211,52 @@ void startTransferPump() {
   display.display();
 }
 
+void recirculationMode() {
+    if (transferPumpActive) {
+        recirculationModePending = true;
+        return;
+    }
+
+    UVlightOn();
+    openRecirculationValve();
+    
+    recirculationModePending = false;
+    recirculationModeBlockTransferPump = true;
+    recirculationModeActive = true;
+    recirculationModeTimeOfRequestedAction = millis();
+
+    Serial.println("Recirculation Mode Started");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Recirc Mode On");
+    display.display();
+}
+
+void updateDisplay() {
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("TP Active: ");
+    display.println(transferPumpActive ? "Yes" : "No");
+    display.print("DP Active: ");
+    display.println(distributionPumpActive ? "Yes" : "No");
+    display.print("Recirc Valve: ");
+    display.println(recirculationValveOpen ? "Open" : "Closed");
+    display.print("Purge Valve: ");
+    display.println(purgeValveOpen ? "Open" : "Closed");
+    display.display();
+}
+
+void loop() {
+    // Call to check float sensors
+    checkFloatSensors();
+
+    // Additional functionality
+    if (recirculationModeActive && (millis() - recirculationModeTimeOfRequestedAction > RECIRCULATION_MODE_TIMEOUT)) {
+        closeRecirculationValve(); // Close valve if timeout reached
+        recirculationModeActive = false;
+        Serial.println("Recirculation Mode Timeout");
+    }
+
+    // Regularly update display with current state
+    updateDisplay();
+}
