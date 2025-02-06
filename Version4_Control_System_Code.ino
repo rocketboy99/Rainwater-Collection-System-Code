@@ -64,6 +64,9 @@ volatile bool sedimentScreenPurgeNormal = false;
 volatile bool sedimentScreenPurgeDisabled = false;
 volatile bool sedimentScreenPurgeManual = false;
 
+volatile int currentControlState = 0; //sets the current state to idle
+volatile int previousControlState = 0; //sets the previous state to idle
+volatile bool currentControlStateIsPreviousState = false;
 
 void setup() {
     Serial.begin(115200);
@@ -148,10 +151,81 @@ void readControlStates() {
     sedimentScreenPurgeNormal = (sedimentScreenPurgeNormalPin == HIGH);
     sedimentScreenPurgeDisabled = (sedimentScreenPurgeNormalPin == LOW);
 
+    // Read Manual Control Buttons
+    int manualStopRecirculation = digitalRead(MANUAL_STOP_RECIRCULATION);
+    int manualPrimeTransferPump = digitalRead(MANUAL_PRIME_TRANSFER_PUMP);
+    int manualPrimeDistributionPump = digitalRead(MANUAL_PRIME_DISTRIBUTION_PUMP);
+
+    // Handle Manual Control Buttons
+    manualStopRecirculationActive = (manualStopRecirculation == HIGH);
+    manualPrimeTransferPumpActive = (manualPrimeTransferPump == HIGH);
+    manualPrimeDistributionPumpActive = (manualPrimeDistributionPump == HIGH);
+}
+
+
+
+void determineControlMode() {
+    // Reset the current state
+    currentControlState = 0;
+
+    // Check Transfer Pump Mode
+    if (transferPumpModeDisabled) {
+        currentControlState |= (1 << 0); // Bit 0 for disabled
+    } else if (transferPumpModeManual) {
+        currentControlState |= (1 << 1); // Bit 1 for manual
+    } else {
+        currentControlState |= (1 << 2); // Bit 2 for normal
+    }
+
+    // Check Distribution Pump Mode
+    if (distributionPumpModeDisabled) {
+        currentControlState |= (1 << 3); // Bit 3 for disabled
+    } else if (distributionPumpModeManual) {
+        currentControlState |= (1 << 4); // Bit 4 for manual
+    } else {
+        currentControlState |= (1 << 5); // Bit 5 for normal
+    }
+
+    // Check Recirculation Function
+    if (recirculationFunctionDisabled) {
+        currentControlState |= (1 << 6); // Bit 6 for disabled
+    } else {
+        currentControlState |= (1 << 7); // Bit 7 for normal
+    }
+
+    // Check Sediment Screen Purge Function
+    if (sedimentScreenPurgeDisabled) {
+        currentControlState |= (1 << 8); // Bit 8 for disabled
+    } else {
+        currentControlState |= (1 << 9); // Bit 9 for normal
+    }
+
+    // Check Manual Control Buttons
+    if (manualStopRecirculationActive) {
+        currentControlState |= (1 << 10); // Bit 10 for manual stop recirculation
+    }
+    if (manualPrimeTransferPumpActive) {
+        currentControlState |= (1 << 11); // Bit 11 for manual prime transfer pump
+    }
+    if (manualPrimeDistributionPumpActive) {
+        currentControlState |= (1 << 12); // Bit 12 for manual prime distribution pump
+    }
+
+
+    // ____________________________________________ Check to see if the control state has changed _________________________________________
+    if(previousControlState == currentControlState){ 
+        currentControlStateIsPreviousState = true;
+    }else{
+        previousControlState = currentControlState;
+        currentControlStateIsPreviousState = false;
+    }
+
+}
+
 void dryRunCutoffTransferPump() {
     if (digitalRead(ACCUMULATOR_LOWER_FLOAT) == HIGH) {
         digitalWrite(TRANSFER_PUMP_RELAY, LOW);
-         wait(pump_stop_delay);
+         millis(pump_stop_delay);
         transferPumpDryRun = true;
         Serial.println("Transfer Pump Dry Run Cutoff Triggered");
         display.clearDisplay();
@@ -164,7 +238,7 @@ void dryRunCutoffTransferPump() {
 void dryRunCutoffDistributionPump() {
     if (digitalRead(STORAGE_LOWER_FLOAT) == HIGH) {
         digitalWrite(DISTRIBUTION_PUMP_RELAY, LOW);
-         wait(pump_stop_delay);
+         millis(pump_stop_delay);
         distributionPumpDryRun = true;
         Serial.println("Distribution Pump Dry Run Cutoff Triggered");
         display.clearDisplay();
@@ -191,7 +265,7 @@ void startUVLight() {
   display.setCursor(0, 0);
   display.print("Starting UV Light");
   display.display();
-  wait(uv_light_delay);
+  millis(uv_light_delay);
   UVlightActive = true;
   Serial.println("UV Light Started");
   display.clearDisplay();
@@ -208,7 +282,7 @@ void openRecirculationValve() {
     display.setCursor(0, 0);
     display.print("Opening Recir. Valve...");
     display.display();
-    wait(valve_operation_time);
+    millis(valve_operation_time);
     recirculationValveOpen = true;
     Serial.println("Recirculation Valve Open");
     display.clearDisplay();
@@ -224,7 +298,7 @@ void closeRecirculationValve() {
     display.setCursor(0, 0);
     display.print("Closing Recir. Valve...");
     display.display();
-    wait(valve_operation_time);
+    millis(valve_operation_time);
     recirculationValveOpen = false;
     Serial.println("Recirculation Valve Closed");
     display.clearDisplay();
@@ -240,7 +314,7 @@ void openPurgeValve() {
     display.setCursor(0, 0);
     display.print("Opening Purge. Valve...");
     display.display();
-    wait(valve_operation_time);
+    millis(valve_operation_time);
     purgeValveOpen = true;
     Serial.println("Purge Valve Open");
     display.clearDisplay();
@@ -256,7 +330,7 @@ void closePurgeValve() {
     display.setCursor(0, 0);
     display.print("Closing Purge. Valve...");
     display.display();
-    wait(valve_operation_time);
+    millis(valve_operation_time);
     purgeValveOpen = false;
     Serial.println("Purge Valve Closed");
     display.clearDisplay();
@@ -268,13 +342,12 @@ void closePurgeValve() {
 void stopTransferPump() {
     digitalWrite(TRANSFER_PUMP_RELAY, LOW);
     transferPumpActive = false;
-     wait(pump_stop_delay);
+     millis(pump_stop_delay);
     Serial.println("Transfer Pump Stopped");
     display.clearDisplay();
     display.setCursor(0, 0);
     display.print("Transfer Pump Off");
     display.display();
-    wait(pump_stop_delay);
 }
 
 void startTransferPump() {
@@ -329,6 +402,7 @@ void loop() {
 
     // Read control states
     readControlStates();
+    determineControlMode(); // Determine and print the current control state mode
     
     // Call to check float sensors
     checkFloatSensors();
@@ -342,4 +416,6 @@ void loop() {
 
     // Regularly update display with current state
     updateDisplay();
+
+
 }
