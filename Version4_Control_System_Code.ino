@@ -68,21 +68,47 @@ volatile int currentControlState = 0; //sets the current state to idle
 volatile int previousControlState = 0; //sets the previous state to idle
 volatile bool currentControlStateIsPreviousState = false;
 
+volatile int TextSize = 1;
+
+
+//Serial Com Addresses:
+#define PRIMARY_DISPLAY_ADDR 0x3C //Primary Display Address
+#define SECONDARY_DISPLAY_ADDR 0x3D //Secondary Display Address
+#define RTC_ADDR 0x68 //Real Time Clock Address
+
+//LCD
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128  // OLED display width, in pixels
+#define SCREEN_HEIGHT 64  // OLED display height, in pixels
+
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+
 void setup() {
     Serial.begin(115200);
     Wire.begin();
 
-    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-        Serial.println("SSD1306 allocation failed");
-        while (1);
+      // Initialize primary display
+    if (!primaryDisplay.begin(SSD1306_SWITCHCAPVCC, PRIMARY_DISPLAY_ADDR)) {
+        Serial.println("Primary display initialization failed!");
+//set flag here
     }
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 0);
-    display.print("System Initializing...");
-    display.display();
-    delay(1000);
+
+    // Initialize secondary display
+    if (!secondaryDisplay.begin(SSD1306_SWITCHCAPVCC, SECONDARY_DISPLAY_ADDR)) {
+        Serial.println("Secondary display initialization failed!");
+//set flag here
+    }
+
+    // Clear both displays initially
+    primaryDisplay.clearDisplay();
+    primaryDisplay.display();
+    secondaryDisplay.clearDisplay();
+    secondaryDisplay.display();
 
     pinMode(MANUAL_STOP_RECIRCULATION, INPUT_PULLUP);
     pinMode(DISTRIBUTION_PRESSURE_SWITCH, INPUT_PULLUP);
@@ -123,6 +149,38 @@ void setup() {
     display.display();
 
 } /* ______________________________________________________________ End of Setup() ___________________________________________________________________ */
+
+// Function to display text on OLED Primary and Serial Monitor (will soon also log to SD card)
+// Use the formate: showMessage("message", "display", 1); inwhich display is either primary or secondary and 1 is the text size
+void showMessage(const char *message, const char *displayType, int textSize) {
+    Serial.print("[");
+    Serial.print(displayType);
+    Serial.print("] ");
+    Serial.print("Text Size ");
+    Serial.print(textSize);
+    Serial.print(": ");
+    Serial.println(message);  // Print to Serial Monitor
+
+    // Determine which display to update
+    Adafruit_SSD1306 *targetDisplay = nullptr;
+
+    if (strcmp(displayType, "primary") == 0) {
+        targetDisplay = &primaryDisplay;
+    } else if (strcmp(displayType, "secondary") == 0) {
+        targetDisplay = &secondaryDisplay;
+    } else {
+        Serial.println("Error: Invalid display type! Use 'primary' or 'secondary'.");
+        return;
+    }
+
+    // Clear the selected display and print the message
+    targetDisplay->clearDisplay();
+    targetDisplay->setCursor(0, 0);
+    targetDisplay->setTextSize(textSize);   // Set the custom text size
+    targetDisplay->setTextColor(SSD1306_WHITE);
+    targetDisplay->print(message);
+    targetDisplay->display();
+}
 
 void readControlStates() {
     // Read Transfer Pump Mode Switch
@@ -364,24 +422,33 @@ void startTransferPump() {
 }
 
 void recirculationMode() {
-    if (transferPumpActive) {
-        recirculationModePending = true;
-        return;
-    }
 
-    UVlightOn();
-    openRecirculationValve();
+//verify that the mode is allowed to be operated and exit if not
+if(recirculationFunctionDisabled == false){
+    //send a system flag and exit
+    return;
+}
+
+
+//turn off the transfer pump, if needed, to prevent exceeding flow rate limit
+    if(transferPumpActive == true){
+       stopTransferPump();
+    } else {
+
+        UVlightOn();
+        openRecirculationValve();
     
-    recirculationModePending = false;
-    recirculationModeBlockTransferPump = true;
-    recirculationModeActive = true;
-    recirculationModeTimeOfRequestedAction = millis();
+        recirculationModePending = false;
+        recirculationModeBlockTransferPump = true;
+        recirculationModeActive = true;
+        recirculationModeTimeOfRequestedAction = millis();
 
-    Serial.println("Recirculation Mode Started");
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print("Recirc Mode On");
-    display.display();
+        Serial.println("Recirculation Mode Started");
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.print("Recirc Mode On");
+        display.display();
+    }
 }
 
 void updateDisplay() {
