@@ -153,12 +153,7 @@ void setup() {
 // Function to display text on OLED Primary and Serial Monitor (will soon also log to SD card)
 // Use the formate: showMessage("message", "display", 1); inwhich display is either primary or secondary and 1 is the text size
 void showMessage(const char *message, const char *displayType, int textSize) {
-    Serial.print("[");
-    Serial.print(displayType);
-    Serial.print("] ");
-    Serial.print("Text Size ");
-    Serial.print(textSize);
-    Serial.print(": ");
+    
     Serial.println(message);  // Print to Serial Monitor
 
     // Determine which display to update
