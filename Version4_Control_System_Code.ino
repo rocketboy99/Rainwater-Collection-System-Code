@@ -1,3 +1,21 @@
+/**************************************************************
+*     Rainwater Processing System Control Module Firmware     *
+*                        Version 1.6                          *
+*                           Rev 0                             *
+*                       February 2025                         *
+*                                                             *
+*                    RainCycle Systems                        *
+*             Highline Technical Enterprises LLC              *
+*       Sole Intellectual Property of Andrew McMillian        *
+*                                                             *
+*                  Contact: 406-209-5710                      *
+*           highlinetechnicalenterprises@gmail.com            *
+***************************************************************/
+
+
+
+
+
 // -------------------------------------------------- Pin Assignments -------------------------------------------------- 
 
 // User Interface Inputs
@@ -105,7 +123,7 @@ volatile int alarmMode = 0; //used to set tone
 
 //Software lockouts for electronic hardware
 volatile bool displayDisabled = false; 
-volatile bool RTC_Disabled = false; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! update auto recirculate function to accomidate this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+volatile bool RTC_Disabled = false; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! update: auto recirculate function to accomidate this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 volatile bool AudibleWarningDisabled = false; 
 
 //Display
@@ -199,10 +217,12 @@ void setup() {
              }
         }
 
-    //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check for missing display setup code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    /*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check for missing display setup code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
 
     //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Missing RTC Code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    */
 
     // ######################################################### Pinmodes and Interupts ############################################################
 
@@ -300,7 +320,7 @@ void setup() {
     //Provide time to check UI outputs are off
     delay(long_startup_steps_delay);
 
-    // ------------------------------------------------------------------ UI Input Initialization ---------------------------------------
+    // ------------------------------------------------------------------ UI Input, Sensors and Outputs Initialization ---------------------------------------
     lcdPrintLine = 0;
     display.clearDisplay();
 
@@ -310,11 +330,11 @@ void setup() {
     display.print("System Initializing...");
     display.display();
     lcdPrintLine = 16;
-    Serial.println("Turning all indicators off...");
+    Serial.println("Connecting UI Controls and Sensors...");
     display.setTextSize(TextSize);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
-    display.print("Verify: All Indicators OFF?");
+    display.print("Connecting Sensors and UI Controls...");
     display.display();
 
     
@@ -334,6 +354,16 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(MANUAL_STOP_RECIRCULATION), exitRecirculationManual, FALLING);
     attachInterrupt(digitalPinToInterrupt(DISTRIBUTION_PRESSURE_SWITCH), exitRecirculationAuto, FALLING);
 
+    delay(short_startup_steps_delay);
+    lcdPrintLine = 32;
+    Serial.println("Connecting to relays...");
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("Connecting to relays");
+    display.display();
+
+    
      //Outputs
     pinMode(TRANSFER_PUMP_RELAY, OUTPUT);
     pinMode(PWM_RELAY, OUTPUT);
@@ -342,24 +372,27 @@ void setup() {
     pinMode(RECIRCULATION_VALVE_RELAY, OUTPUT);
     pinMode(PURGE_VALVE_RELAY, OUTPUT);
     pinMode(UV_LIGHT_RELAY, OUTPUT);
+
     
+    delay(short_startup_steps_delay);
 
-
-    Serial.println("Indicators Configured");
-
-    Serial.println("Interrupts Configured:");
-    Serial.println("- Manual Stop Recirculation");
-    Serial.println("- Distribution Pressure Switch");
+    lcdPrintLine = 0;
     display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print("Interrupts Config");
+
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initialized");
     display.display();
-    
-    Serial.println("System Ready");
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print("System Ready");
+    lcdPrintLine = 16;
+    Serial.println("Connecting UI Controls and Sensors...");
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("All Systems Go...");
     display.display();
+
+    delay(long_startup_steps_delay);
 
 } /* ______________________________________________________________ End of Setup() ___________________________________________________________________ */
 
