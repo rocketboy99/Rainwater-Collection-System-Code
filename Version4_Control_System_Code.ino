@@ -53,7 +53,7 @@
 #define STORAGE_UPPER_FLOAT 16
 #define STORAGE_LOWER_FLOAT 17
 
-// Actuators
+// Actuators (on 8 unit relay module)
 #define TRANSFER_PUMP_RELAY 22
 #define PWM_RELAY 23
 #define DISTRIBUTION_PUMP_RELAY 24
@@ -61,6 +61,7 @@
 #define RECIRCULATION_VALVE_RELAY 26
 #define PURGE_VALVE_RELAY 27
 #define UV_LIGHT_RELAY 28
+#define MASTER_PWR_RELAY 28
 
 // -------------------------------------------------- Constants -------------------------------------------------- 
 
@@ -121,6 +122,9 @@ volatile bool currentControlStateIsPreviousState = false;
 volatile bool alarmState = false;
 volatile int alarmMode = 0; //used to set tone
 
+//Misc.
+volatile float temperature = 0; //hold control module temperature
+
 //Software lockouts for electronic hardware
 volatile bool displayDisabled = false; 
 volatile bool RTC_Disabled = false; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! update: auto recirculate function to accomidate this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -179,21 +183,17 @@ void setup() {
 
     Serial.println("Connecting To RTC...");
     
-    display.setTextSize(TextSize);
-    display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
     display.print("Connecting To RTC...");
     display.display();
     delay(short_startup_steps_delay);
     lcdPrintLine = lcdPrintLine + 16;
     
-    // Initialize RTC
+    // ---------------------------------------------------------- Initialize RTC -------------------------------------------
 
-    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
+    if (!rtc.begin()) {
         Serial.println("RTC initialization failed!");
            
-        display.setTextSize(TextSize);
-        display.setTextColor(SSD1306_WHITE);
         display.setCursor(0, lcdPrintLine);
         display.print("RTC Failure...");
         display.display();
@@ -202,11 +202,9 @@ void setup() {
         delay(100);
         
         Serial.println("Trying Again...");
-         if (!primaryDisplay.begin(SSD1306_SWITCHCAPVCC, PRIMARY_DISPLAY_ADDR)){
+         if (!rtc.begin()){
             Serial.println("Second RTC failure...disabling display");
             
-            display.setTextSize(TextSize);
-            display.setTextColor(SSD1306_WHITE);
             display.setCursor(0, lcdPrintLine);
             display.print("Disabling RTC...");
             display.display();
@@ -215,6 +213,59 @@ void setup() {
 
              RTC_Disabled = true; //RTC disabled from here on out (this changes the method for auto recirculation timing)
              }
+        } else{
+                DateTime now = rtc.now();  // Get current date, time, and temperature
+                temperature = rtc.getTemperature();  // Get temperature from DS3231
+        
+
+             // Print to OLED Display
+             display.clearDisplay();
+             display.setTextSize(TextSize);
+             display.setTextColor(SSD1306_WHITE);
+             display.setCursor(0, 0);
+             display.print("System Initializing...");
+             display.setCursor(0, 32);
+             display.print("RTC Active, Time/Date:");
+             display.display();
+
+             delay(short_startup_steps_delay);
+        
+             display.clearDisplay();
+             display.setTextSize(1);
+             display.setTextColor(SSD1306_WHITE);
+             display.setCursor(0, 0);
+
+             display.print("Date: ");
+             display.print(now.year());
+             display.print("/");
+             display.print(now.month());
+             display.print("/");
+             display.print(now.day());
+    
+             display.setCursor(0, 16);
+             display.print("Time: ");
+             display.print(now.hour());
+             display.print(":");
+             display.print(now.minute());
+             display.print(":");
+             display.print(now.second());
+
+             display.setCursor(0, 32);
+             display.print("Temp: ");
+             display.print(temperature);
+             display.print(" C");
+
+             display.setCursor(0, 52);
+             display.print("Dryrun: ");
+             display.print(dryrun);
+
+
+             display.display(); // Update OLED display
+
+             delay(long_startup_steps_delay);
+        
+            
+        //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! RTC get time, set system runtime var and print to display !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         }
 
     /*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check for missing display setup code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -231,8 +282,11 @@ void setup() {
     
     Serial.println("Initalizing UI Outputs and Running Test.  Verify every light turns on the buzzer sounds...");
     
-    display.setTextSize(TextSize);
-    display.setTextColor(SSD1306_WHITE);
+    // Display Time
+    display.clearDisplay();
+    display.display();
+    lcdPrintLine = 0;
+    
     display.setCursor(0, lcdPrintLine);
     display.print("Activating All UI Outputs...");
     display.display();
@@ -268,15 +322,11 @@ void setup() {
     if(AudibleWarningDisabled == false){
         tone(BUZZER, 500);
         Serial.println("AudibleWarningDisabled == false");
-        display.setTextSize(TextSize);
-        display.setTextColor(SSD1306_WHITE);
         display.setCursor(0, lcdPrintLine);
         display.print("Verify: All Indicators ON?");
         display.display();
       }else{
         Serial.println("AudibleWarningDisabled == true");
-        display.setTextSize(TextSize);
-        display.setTextColor(SSD1306_WHITE);
         display.setCursor(0, lcdPrintLine);
         display.print("All Lights ON - Buzzer DBLD");
         display.display();
@@ -304,15 +354,11 @@ void setup() {
     digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, LOW);
     digitalWrite(MASTER_CAUTION_INDICATOR, LOW);
 
-    display.setTextSize(TextSize);
-    display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
     display.print("System Initializing...");
     display.display();
     lcdPrintLine = 32;
     Serial.println("Turning all indicators off...");
-    display.setTextSize(TextSize);
-    display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
     display.print("Verify: All Indicators OFF?");
     display.display();
@@ -320,19 +366,15 @@ void setup() {
     //Provide time to check UI outputs are off
     delay(long_startup_steps_delay);
 
-    // ------------------------------------------------------------------ UI Input, Sensors and Outputs Initialization ---------------------------------------
+    // ------------------------------------------------------------------ UI Input and SensorsInitialization ---------------------------------------
     lcdPrintLine = 0;
     display.clearDisplay();
 
-    display.setTextSize(TextSize);
-    display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
     display.print("System Initializing...");
     display.display();
     lcdPrintLine = 16;
     Serial.println("Connecting UI Controls and Sensors...");
-    display.setTextSize(TextSize);
-    display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
     display.print("Connecting Sensors and UI Controls...");
     display.display();
@@ -340,21 +382,37 @@ void setup() {
     
 
     //UI Controls
+
     pinMode(MANUAL_STOP_RECIRCULATION, INPUT_PULLUP);
-    pinMode(DISTRIBUTION_PRESSURE_SWITCH, INPUT_PULLUP);
     pinMode(MANUAL_PRIME_DISTRIBUTION_PUMP, INPUT_PULLUP);
     pinMode(MANUAL_PRIME_TRANSFER_PUMP, INPUT_PULLUP);
+    pinMode(TRANSFER_PUMP_MODE_NORMAL, INPUT_PULLUP);
+    pinMode(TRANSFER_PUMP_MODE_MANUAL, INPUT_PULLUP);
+    pinMode(DISTRIBUTION_PUMP_MODE_NORMAL, INPUT_PULLUP);
+    pinMode(DISTRIBUTION_PUMP_MODE_MANUAL, INPUT_PULLUP);
+    pinMode(RECIRCULATION_FUNCTION_ENABLE, INPUT_PULLUP);
+    pinMode(SEDIMENT_PURGE_FUNCTION_NORMAL, INPUT_PULLUP);
+    pinMode(SEDIMENT_PURGE_FUNCTION_MANUAL, INPUT_PULLUP);
+
+    
+    //Float Switches
+
     pinMode(ACCUMULATOR_UPPER_FLOAT, INPUT_PULLUP);
     pinMode(ACCUMULATOR_LOWER_FLOAT, INPUT_PULLUP);
     pinMode(STORAGE_UPPER_FLOAT, INPUT_PULLUP);
     pinMode(STORAGE_LOWER_FLOAT, INPUT_PULLUP);
 
+    //Sensor Interupt
+    pinMode(DISTRIBUTION_PRESSURE_SWITCH, INPUT_PULLUP);
 
-    //Interupts (sensor and manual)
+    //Attach Interupts (sensor and manual)
     attachInterrupt(digitalPinToInterrupt(MANUAL_STOP_RECIRCULATION), exitRecirculationManual, FALLING);
     attachInterrupt(digitalPinToInterrupt(DISTRIBUTION_PRESSURE_SWITCH), exitRecirculationAuto, FALLING);
 
+
+    //-------------------------------------------------------- Setup relays and test functionality -----------------------------------------------------
     delay(short_startup_steps_delay);
+    
     lcdPrintLine = 32;
     Serial.println("Connecting to relays...");
     display.setTextSize(TextSize);
@@ -372,6 +430,21 @@ void setup() {
     pinMode(RECIRCULATION_VALVE_RELAY, OUTPUT);
     pinMode(PURGE_VALVE_RELAY, OUTPUT);
     pinMode(UV_LIGHT_RELAY, OUTPUT);
+    pinMode(MASTER_PWR_RELAY, OUTPUT);
+
+    
+    digitalWrite(MASTER_PWR_RELAY, LOW); //prevents activation of system power durring relay test
+    
+    pinMode(PWM_RELAY, OUTPUT);
+    pinMode(DISTRIBUTION_PUMP_RELAY, OUTPUT);
+    pinMode(RECIRCULATION_MODE_RELAY, OUTPUT);
+    pinMode(RECIRCULATION_VALVE_RELAY, OUTPUT);
+    pinMode(PURGE_VALVE_RELAY, OUTPUT);
+    pinMode(UV_LIGHT_RELAY, OUTPUT);
+    pinMode(TRANSFER_PUMP_RELAY, OUTPUT);
+
+
+    
 
     
     delay(short_startup_steps_delay);
@@ -421,6 +494,20 @@ void showMessage(const char *message, const char *displayType, int textSize) {
     targetDisplay->setTextColor(SSD1306_WHITE);
     targetDisplay->print(message);
     targetDisplay->display();
+}
+
+void updateIndicators() {
+    digitalWrite(TRANSFER_PUMP_ON_INDICATOR, transferPumpActive ? HIGH : LOW);
+    digitalWrite(DISTRIBUTION_PUMP_ON_INDICATOR, distributionPumpDryRun ? HIGH : LOW);
+    digitalWrite(UV_LAMP_ON_INDICATOR, recirculationModeActive ? HIGH : LOW);
+    digitalWrite(NEW_WATER_PROCESS_INDICATOR, recirculationModePending ? HIGH : LOW);
+    digitalWrite(ACCUMULATOR_UPPER_FLOAT_INDICATOR, digitalRead(ACCUMULATOR_UPPER_FLOAT));
+    digitalWrite(ACCUMULATOR_LOWER_FLOAT_INDICATOR, digitalRead(ACCUMULATOR_LOWER_FLOAT));
+    digitalWrite(STORAGE_UPPER_FLOAT_INDICATOR, digitalRead(STORAGE_UPPER_FLOAT));
+    digitalWrite(STORAGE_LOWER_FLOAT_INDICATOR, digitalRead(STORAGE_LOWER_FLOAT));
+    digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, digitalRead(DISTRIBUTION_PRESSURE_SWITCH));
+    digitalWrite(MASTER_CAUTION_INDICATOR, (transferPumpDryRun || distributionPumpDryRun) ? HIGH : LOW);
+
 }
 
 void readControlStates() {
