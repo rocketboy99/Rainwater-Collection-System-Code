@@ -1,46 +1,48 @@
 // -------------------------------------------------- Pin Assignments -------------------------------------------------- 
 
 // User Interface Inputs
-#define MANUAL_STOP_RECIRCULATION D2
-#define MANUAL_PRIME_DISTRIBUTION_PUMP D4
-#define MANUAL_PRIME_TRANSFER_PUMP D12
-#define TRANSFER_PUMP_MODE_NORMAL D5
-#define TRANSFER_PUMP_MODE_MANUAL D6
-#define DISTRIBUTION_PUMP_MODE_NORMAL D7
-#define DISTRIBUTION_PUMP_MODE_MANUAL D8
-#define RECIRCULATION_FUNCTION_ENABLE D9
-#define SEDIMENT_PURGE_FUNCTION_NORMAL D10
-#define SEDIMENT_PURGE_FUNCTION_MANUAL D11
+#define MANUAL_STOP_RECIRCULATION 2
+#define MANUAL_PRIME_DISTRIBUTION_PUMP 4
+#define MANUAL_PRIME_TRANSFER_PUMP 12
+#define TRANSFER_PUMP_MODE_NORMAL 5
+#define TRANSFER_PUMP_MODE_MANUAL 6
+#define DISTRIBUTION_PUMP_MODE_NORMAL 7
+#define DISTRIBUTION_PUMP_MODE_MANUAL 8
+#define RECIRCULATION_FUNCTION_ENABLE 9
+#define SEDIMENT_PURGE_FUNCTION_NORMAL 10
+#define SEDIMENT_PURGE_FUNCTION_MANUAL 11
 
 // Indicator Light Assignments
-#define NORMAL_AUTO_INDICATOR D30
-#define TRANSFER_PUMP_ON_INDICATOR D31
-#define DISTRIBUTION_PUMP_ON_INDICATOR D32
-#define UV_LAMP_ON_INDICATOR D33
-#define NEW_WATER_PROCESS_INDICATOR D34
-#define ACCUMULATOR_UPPER_FLOAT_INDICATOR D35
-#define ACCUMULATOR_LOWER_FLOAT_INDICATOR D36
-#define STORAGE_UPPER_FLOAT_INDICATOR D37
-#define STORAGE_LOWER_FLOAT_INDICATOR D38
-#define DISTRIBUTION_PRESSURE_LOW_INDICATOR D39
-#define MASTER_CAUTION_INDICATOR D46
+#define NORMAL_AUTO_INDICATOR 30
+#define TRANSFER_PUMP_ON_INDICATOR 31
+#define DISTRIBUTION_PUMP_ON_INDICATOR 32
+#define UV_LAMP_ON_INDICATOR 33
+#define NEW_WATER_PROCESS_INDICATOR 34
+#define ACCUMULATOR_UPPER_FLOAT_INDICATOR 35
+#define ACCUMULATOR_LOWER_FLOAT_INDICATOR 36
+#define STORAGE_UPPER_FLOAT_INDICATOR 37
+#define STORAGE_LOWER_FLOAT_INDICATOR 38
+#define DISTRIBUTION_PRESSURE_LOW_INDICATOR 39
+#define MASTER_CAUTION_INDICATOR 46
 
+//Warning Buzzer
+#define BUZZER 28
 
 // Sensors
-#define DISTRIBUTION_PRESSURE_SWITCH D3
-#define ACCUMULATOR_UPPER_FLOAT A0
-#define ACCUMULATOR_LOWER_FLOAT A1
-#define STORAGE_UPPER_FLOAT A2
-#define STORAGE_LOWER_FLOAT A3
+#define DISTRIBUTION_PRESSURE_SWITCH 3
+#define ACCUMULATOR_UPPER_FLOAT 14
+#define ACCUMULATOR_LOWER_FLOAT 15
+#define STORAGE_UPPER_FLOAT 16
+#define STORAGE_LOWER_FLOAT 17
 
 // Actuators
-#define TRANSFER_PUMP_RELAY D22
-#define PWM_RELAY D23
-#define DISTRIBUTION_PUMP_RELAY D24
-#define RECIRCULATION_MODE_RELAY D25
-#define RECIRCULATION_VALVE_RELAY D26
-#define PURGE_VALVE_RELAY D27
-#define UV_LIGHT_RELAY D28
+#define TRANSFER_PUMP_RELAY 22
+#define PWM_RELAY 23
+#define DISTRIBUTION_PUMP_RELAY 24
+#define RECIRCULATION_MODE_RELAY 25
+#define RECIRCULATION_VALVE_RELAY 26
+#define PURGE_VALVE_RELAY 27
+#define UV_LIGHT_RELAY 28
 
 // -------------------------------------------------- Constants -------------------------------------------------- 
 
@@ -50,10 +52,11 @@ const int RECIRCULATION_MODE_TIMEOUT = 1380000; // 23 minutes
 const int valve_operation_time = 6000 //6 seconds
 const int pump_stop_delay = 500 // 0.5 second
 const int uv_light_delay = 2500 // 2.5 second
-const int startup_steps_delay = 1000 // 1 second
+const int short_startup_steps_delay = 750 // 0.75 second
+const int long_startup_steps_delay = 2500 // 2.5 seconds
 
 //I2C Addresses:
-#define PRIMARY_DISPLAY_ADDR 0x3C //Primary Display Address
+#define OLED_ADDRESS 0x3C //Display Address
 #define RTC_ADDR 0x68 //Real Time Clock Address
 
 #define SCREEN_WIDTH 128  // OLED display width, in pixels
@@ -96,58 +99,127 @@ volatile int currentControlState = 0; //sets the current state to idle
 volatile int previousControlState = 0; //sets the previous state to idle
 volatile bool currentControlStateIsPreviousState = false;
 
-volatile bool displayDisabled = false;
+//System Alarm States (for audible buzzer and the master caution light)
+volatile bool alarmState = false;
+volatile int alarmMode = 0; //used to set tone
 
+//Software lockouts for electronic hardware
+volatile bool displayDisabled = false; 
+volatile bool RTC_Disabled = false; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! update auto recirculate function to accomidate this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+volatile bool AudibleWarningDisabled = false; 
+
+//Display
 volatile int TextSize = 1;
+volatile int lcdPrintLine = 0;
 
 // -------------------------------------------------- Libraries -------------------------------------------------- 
 
-//LCD
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+
 #include <Wire.h>
 #include <RTClib.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! RTC library goes here !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-//This needs and improved definition
+
+//Create objects for RTC and OLED
+RTC_DS3231 rtc;
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 
 void setup() {
 
 
-    // -------------------------------------------------- Setup display and serial com link -------------------------------------------------- 
+    // #################################################### Setup serial com link, OLED display and RTC module #########################################################
     
     Serial.begin(115200);
     Wire.begin();
 
-   // Initialize primary display
-    if (!primaryDisplay.begin(SSD1306_SWITCHCAPVCC, PRIMARY_DISPLAY_ADDR)) {
+   // Initialize display
+    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
         Serial.println("OLED display initialization failed!");
         delay(100);
         Serial.println("Trying Again...");
-         if (!primaryDisplay.begin(SSD1306_SWITCHCAPVCC, PRIMARY_DISPLAY_ADDR)){
+         if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)){
             Serial.println("Second display failure...disabling display");
             displayDisabled = true; //display disabled from here on out
          }
     }
 
+    //Send a startup message
+    Serial.println("System Initializing...");
+    
+    display.clearDisplay();
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initializing...");
+    display.display();
+    
+    delay(short_startup_steps_delay);
+    lcdPrintLine = lcdPrintLine + 16;
+
+
+    Serial.println("Connecting To RTC...");
+    
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("Connecting To RTC...");
+    display.display();
+    delay(short_startup_steps_delay);
+    lcdPrintLine = lcdPrintLine + 16;
+    
+    // Initialize RTC
+
+    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
+        Serial.println("RTC initialization failed!");
+           
+        display.setTextSize(TextSize);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(0, lcdPrintLine);
+        display.print("RTC Failure...");
+        display.display();
+        delay(short_startup_steps_delay);
+        lcdPrintLine = lcdPrintLine + 16;
+        delay(100);
+        
+        Serial.println("Trying Again...");
+         if (!primaryDisplay.begin(SSD1306_SWITCHCAPVCC, PRIMARY_DISPLAY_ADDR)){
+            Serial.println("Second RTC failure...disabling display");
+            
+            display.setTextSize(TextSize);
+            display.setTextColor(SSD1306_WHITE);
+            display.setCursor(0, lcdPrintLine);
+            display.print("Disabling RTC...");
+            display.display();
+            delay(short_startup_steps_delay);
+            lcdPrintLine = lcdPrintLine + 16;
+
+             RTC_Disabled = true; //RTC disabled from here on out (this changes the method for auto recirculation timing)
+             }
+        }
+
     //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check for missing display setup code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     
-    // Clear display
-    primaryDisplay.clearDisplay();
-    primaryDisplay.display();
-    secondaryDisplay.clearDisplay();
-    secondaryDisplay.display();
 
     //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Missing RTC Code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    // -------------------------------------------------- Pinmodes and Interupts -------------------------------------------------- 
+    // ######################################################### Pinmodes and Interupts ############################################################
 
-    //Indicactors
+// ------------------------------------------------------------------ UI Output Initialization ---------------------------------------
+
+    
+    Serial.println("Initalizing UI Outputs and Running Test.  Verify every light turns on the buzzer sounds...");
+    
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("Activating All UI Outputs...");
+    display.display();
+    delay(short_startup_steps_delay);
+    lcdPrintLine = lcdPrintLine + 16;
+    
+    //Indicactors and buzzer pin mode assignments
     pinMode(TRANSFER_PUMP_ON_INDICATOR, OUTPUT);
     pinMode(DISTRIBUTION_PUMP_ON_INDICATOR, OUTPUT);
     pinMode(UV_LAMP_ON_INDICATOR, OUTPUT);
@@ -159,6 +231,94 @@ void setup() {
     pinMode(DISTRIBUTION_PRESSURE_LOW_INDICATOR, OUTPUT);
     pinMode(MASTER_CAUTION_INDICATOR, OUTPUT);
 
+    pinMode(BUZZER, OUTPUT);
+
+    //Check to see if it all works
+    digitalWrite(TRANSFER_PUMP_ON_INDICATOR, HIGH);
+    digitalWrite(DISTRIBUTION_PUMP_ON_INDICATOR, HIGH);
+    digitalWrite(UV_LAMP_ON_INDICATOR, HIGH);
+    digitalWrite(NEW_WATER_PROCESS_INDICATOR, HIGH);
+    digitalWrite(ACCUMULATOR_UPPER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(ACCUMULATOR_LOWER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(STORAGE_UPPER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(STORAGE_LOWER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, HIGH);
+    digitalWrite(MASTER_CAUTION_INDICATOR, HIGH);
+
+    if(AudibleWarningDisabled == false){
+        tone(BUZZER, 500);
+        Serial.println("AudibleWarningDisabled == false");
+        display.setTextSize(TextSize);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(0, lcdPrintLine);
+        display.print("Verify: All Indicators ON?");
+        display.display();
+      }else{
+        Serial.println("AudibleWarningDisabled == true");
+        display.setTextSize(TextSize);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(0, lcdPrintLine);
+        display.print("All Lights ON - Buzzer DBLD");
+        display.display();
+        
+      }
+
+    //Provide time to check UI outputs and then reset outputs and display
+    delay(long_startup_steps_delay);
+
+    lcdPrintLine = 0;
+    display.clearDisplay();
+
+    //turn everything off
+
+    noTone(BUZZER);
+
+    digitalWrite(TRANSFER_PUMP_ON_INDICATOR, LOW);
+    digitalWrite(DISTRIBUTION_PUMP_ON_INDICATOR, LOW);
+    digitalWrite(UV_LAMP_ON_INDICATOR, LOW);
+    digitalWrite(NEW_WATER_PROCESS_INDICATOR, LOW);
+    digitalWrite(ACCUMULATOR_UPPER_FLOAT_INDICATOR, LOW);
+    digitalWrite(ACCUMULATOR_LOWER_FLOAT_INDICATOR, LOW);
+    digitalWrite(STORAGE_UPPER_FLOAT_INDICATOR, LOW);
+    digitalWrite(STORAGE_LOWER_FLOAT_INDICATOR, LOW);
+    digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, LOW);
+    digitalWrite(MASTER_CAUTION_INDICATOR, LOW);
+
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initializing...");
+    display.display();
+    lcdPrintLine = 32;
+    Serial.println("Turning all indicators off...");
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("Verify: All Indicators OFF?");
+    display.display();
+
+    //Provide time to check UI outputs are off
+    delay(long_startup_steps_delay);
+
+    // ------------------------------------------------------------------ UI Input Initialization ---------------------------------------
+    lcdPrintLine = 0;
+    display.clearDisplay();
+
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initializing...");
+    display.display();
+    lcdPrintLine = 16;
+    Serial.println("Turning all indicators off...");
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("Verify: All Indicators OFF?");
+    display.display();
+
+    
+
     //UI Controls
     pinMode(MANUAL_STOP_RECIRCULATION, INPUT_PULLUP);
     pinMode(DISTRIBUTION_PRESSURE_SWITCH, INPUT_PULLUP);
@@ -168,6 +328,7 @@ void setup() {
     pinMode(ACCUMULATOR_LOWER_FLOAT, INPUT_PULLUP);
     pinMode(STORAGE_UPPER_FLOAT, INPUT_PULLUP);
     pinMode(STORAGE_LOWER_FLOAT, INPUT_PULLUP);
+
 
     //Interupts (sensor and manual)
     attachInterrupt(digitalPinToInterrupt(MANUAL_STOP_RECIRCULATION), exitRecirculationManual, FALLING);
