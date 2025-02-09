@@ -1,6 +1,7 @@
-// Pin Assignments
+// -------------------------------------------------- Pin Assignments -------------------------------------------------- 
+
+// User Interface Inputs
 #define MANUAL_STOP_RECIRCULATION D2
-#define DISTRIBUTION_PRESSURE_SWITCH D3
 #define MANUAL_PRIME_DISTRIBUTION_PUMP D4
 #define MANUAL_PRIME_TRANSFER_PUMP D12
 #define TRANSFER_PUMP_MODE_NORMAL D5
@@ -11,11 +12,28 @@
 #define SEDIMENT_PURGE_FUNCTION_NORMAL D10
 #define SEDIMENT_PURGE_FUNCTION_MANUAL D11
 
+// Indicator Light Assignments
+#define NORMAL_AUTO_INDICATOR D30
+#define TRANSFER_PUMP_ON_INDICATOR D31
+#define DISTRIBUTION_PUMP_ON_INDICATOR D32
+#define UV_LAMP_ON_INDICATOR D33
+#define NEW_WATER_PROCESS_INDICATOR D34
+#define ACCUMULATOR_UPPER_FLOAT_INDICATOR D35
+#define ACCUMULATOR_LOWER_FLOAT_INDICATOR D36
+#define STORAGE_UPPER_FLOAT_INDICATOR D37
+#define STORAGE_LOWER_FLOAT_INDICATOR D38
+#define DISTRIBUTION_PRESSURE_LOW_INDICATOR D39
+#define MASTER_CAUTION_INDICATOR D46
+
+
+// Sensors
+#define DISTRIBUTION_PRESSURE_SWITCH D3
 #define ACCUMULATOR_UPPER_FLOAT A0
 #define ACCUMULATOR_LOWER_FLOAT A1
 #define STORAGE_UPPER_FLOAT A2
 #define STORAGE_LOWER_FLOAT A3
 
+// Actuators
 #define TRANSFER_PUMP_RELAY D22
 #define PWM_RELAY D23
 #define DISTRIBUTION_PUMP_RELAY D24
@@ -24,14 +42,24 @@
 #define PURGE_VALVE_RELAY D27
 #define UV_LIGHT_RELAY D28
 
-// Constants
+// -------------------------------------------------- Constants -------------------------------------------------- 
 
-#define RECIRCULATION_MODE_TIMEOUT 1380000 // 23 minutes
-#define valve_operation_time 6000 //6 seconds
-#define pump_stop_delay 500 // 0.5 second
-#define uv_light_delay 2500 // 2.5 second
+//Time Constants
+const int refresh_rate = 100; //system refresh at 0.1 seconds (need to adjust to max while maintaining stability)
+const int RECIRCULATION_MODE_TIMEOUT = 1380000; // 23 minutes
+const int valve_operation_time = 6000 //6 seconds
+const int pump_stop_delay = 500 // 0.5 second
+const int uv_light_delay = 2500 // 2.5 second
+const int startup_steps_delay = 1000 // 1 second
 
-// Global State Variables
+//I2C Addresses:
+#define PRIMARY_DISPLAY_ADDR 0x3C //Primary Display Address
+#define RTC_ADDR 0x68 //Real Time Clock Address
+
+#define SCREEN_WIDTH 128  // OLED display width, in pixels
+#define SCREEN_HEIGHT 64  // OLED display height, in pixels
+
+// -------------------------------------------------- Global Variables -------------------------------------------------- 
 
 volatile bool UVlightActive = false;
 volatile bool recirculationValveOpen = false;
@@ -68,48 +96,70 @@ volatile int currentControlState = 0; //sets the current state to idle
 volatile int previousControlState = 0; //sets the previous state to idle
 volatile bool currentControlStateIsPreviousState = false;
 
+volatile bool displayDisabled = false;
+
 volatile int TextSize = 1;
 
-
-//Serial Com Addresses:
-#define PRIMARY_DISPLAY_ADDR 0x3C //Primary Display Address
-#define SECONDARY_DISPLAY_ADDR 0x3D //Secondary Display Address
-#define RTC_ADDR 0x68 //Real Time Clock Address
+// -------------------------------------------------- Libraries -------------------------------------------------- 
 
 //LCD
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Wire.h>
+#include <RTClib.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! RTC library goes here !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-#define SCREEN_WIDTH 128  // OLED display width, in pixels
-#define SCREEN_HEIGHT 64  // OLED display height, in pixels
-
-
+//This needs and improved definition
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 
 void setup() {
+
+
+    // -------------------------------------------------- Setup display and serial com link -------------------------------------------------- 
+    
     Serial.begin(115200);
     Wire.begin();
 
-      // Initialize primary display
+   // Initialize primary display
     if (!primaryDisplay.begin(SSD1306_SWITCHCAPVCC, PRIMARY_DISPLAY_ADDR)) {
-        Serial.println("Primary display initialization failed!");
-//set flag here
+        Serial.println("OLED display initialization failed!");
+        delay(100);
+        Serial.println("Trying Again...");
+         if (!primaryDisplay.begin(SSD1306_SWITCHCAPVCC, PRIMARY_DISPLAY_ADDR)){
+            Serial.println("Second display failure...disabling display");
+            displayDisabled = true; //display disabled from here on out
+         }
     }
 
-    // Initialize secondary display
-    if (!secondaryDisplay.begin(SSD1306_SWITCHCAPVCC, SECONDARY_DISPLAY_ADDR)) {
-        Serial.println("Secondary display initialization failed!");
-//set flag here
-    }
-
-    // Clear both displays initially
+    //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check for missing display setup code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    
+    // Clear display
     primaryDisplay.clearDisplay();
     primaryDisplay.display();
     secondaryDisplay.clearDisplay();
     secondaryDisplay.display();
 
+    //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Missing RTC Code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    // -------------------------------------------------- Pinmodes and Interupts -------------------------------------------------- 
+
+    //Indicactors
+    pinMode(TRANSFER_PUMP_ON_INDICATOR, OUTPUT);
+    pinMode(DISTRIBUTION_PUMP_ON_INDICATOR, OUTPUT);
+    pinMode(UV_LAMP_ON_INDICATOR, OUTPUT);
+    pinMode(NEW_WATER_PROCESS_INDICATOR, OUTPUT);
+    pinMode(ACCUMULATOR_UPPER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(ACCUMULATOR_LOWER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(STORAGE_UPPER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(STORAGE_LOWER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(DISTRIBUTION_PRESSURE_LOW_INDICATOR, OUTPUT);
+    pinMode(MASTER_CAUTION_INDICATOR, OUTPUT);
+
+    //UI Controls
     pinMode(MANUAL_STOP_RECIRCULATION, INPUT_PULLUP);
     pinMode(DISTRIBUTION_PRESSURE_SWITCH, INPUT_PULLUP);
     pinMode(MANUAL_PRIME_DISTRIBUTION_PUMP, INPUT_PULLUP);
@@ -118,9 +168,23 @@ void setup() {
     pinMode(ACCUMULATOR_LOWER_FLOAT, INPUT_PULLUP);
     pinMode(STORAGE_UPPER_FLOAT, INPUT_PULLUP);
     pinMode(STORAGE_LOWER_FLOAT, INPUT_PULLUP);
-    
+
+    //Interupts (sensor and manual)
     attachInterrupt(digitalPinToInterrupt(MANUAL_STOP_RECIRCULATION), exitRecirculationManual, FALLING);
     attachInterrupt(digitalPinToInterrupt(DISTRIBUTION_PRESSURE_SWITCH), exitRecirculationAuto, FALLING);
+
+     //Outputs
+    pinMode(TRANSFER_PUMP_RELAY, OUTPUT);
+    pinMode(PWM_RELAY, OUTPUT);
+    pinMode(DISTRIBUTION_PUMP_RELAY, OUTPUT);
+    pinMode(RECIRCULATION_MODE_RELAY, OUTPUT);
+    pinMode(RECIRCULATION_VALVE_RELAY, OUTPUT);
+    pinMode(PURGE_VALVE_RELAY, OUTPUT);
+    pinMode(UV_LIGHT_RELAY, OUTPUT);
+    
+
+
+    Serial.println("Indicators Configured");
 
     Serial.println("Interrupts Configured:");
     Serial.println("- Manual Stop Recirculation");
@@ -129,18 +193,6 @@ void setup() {
     display.setCursor(0, 0);
     display.print("Interrupts Config");
     display.display();
-
-    pinMode(TRANSFER_PUMP_RELAY, OUTPUT);
-    pinMode(PWM_RELAY, OUTPUT);
-    pinMode(DISTRIBUTION_PUMP_RELAY, OUTPUT);
-    pinMode(RECIRCULATION_MODE_RELAY, OUTPUT);
-    pinMode(RECIRCULATION_VALVE_RELAY, OUTPUT);
-    pinMode(PURGE_VALVE_RELAY, OUTPUT);
-    pinMode(UV_LIGHT_RELAY, OUTPUT);
-
-    for (int i = TRANSFER_PUMP_RELAY; i <= UV_LIGHT_RELAY; i++) {
-        digitalWrite(i, LOW);
-    }
     
     Serial.println("System Ready");
     display.clearDisplay();
@@ -460,6 +512,26 @@ void updateDisplay() {
     display.display();
 }
 
+void updateIndicators() {
+    digitalWrite(TRANSFER_PUMP_ON_INDICATOR, transferPumpActive ? HIGH : LOW);
+    digitalWrite(DISTRIBUTION_PUMP_ON_INDICATOR, distributionPumpDryRun ? HIGH : LOW);
+    digitalWrite(UV_LAMP_ON_INDICATOR, recirculationModeActive ? HIGH : LOW);
+    digitalWrite(NEW_WATER_PROCESS_INDICATOR, recirculationModePending ? HIGH : LOW);
+    digitalWrite(ACCUMULATOR_UPPER_FLOAT_INDICATOR, digitalRead(ACCUMULATOR_UPPER_FLOAT));
+    digitalWrite(ACCUMULATOR_LOWER_FLOAT_INDICATOR, digitalRead(ACCUMULATOR_LOWER_FLOAT));
+    digitalWrite(STORAGE_UPPER_FLOAT_INDICATOR, digitalRead(STORAGE_UPPER_FLOAT));
+    digitalWrite(STORAGE_LOWER_FLOAT_INDICATOR, digitalRead(STORAGE_LOWER_FLOAT));
+    digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, digitalRead(DISTRIBUTION_PRESSURE_SWITCH));
+    digitalWrite(MASTER_CAUTION_INDICATOR, (transferPumpDryRun || distributionPumpDryRun) ? HIGH : LOW);
+
+    Serial.println("Indicators Updated");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Indicators Updated");
+    display.display();
+}
+
+
 void loop() {
 
     // Read control states
@@ -469,15 +541,16 @@ void loop() {
     // Call to check float sensors
     checkFloatSensors();
 
-    // Additional functionality
+    // This needs work
     if (recirculationModeActive && (millis() - recirculationModeTimeOfRequestedAction > RECIRCULATION_MODE_TIMEOUT)) {
         closeRecirculationValve(); // Close valve if timeout reached
         recirculationModeActive = false;
         Serial.println("Recirculation Mode Timeout");
     }
 
-    // Regularly update display with current state
+    // Regularly update the user interface output
     updateDisplay();
+    updateIndicators();
 
 
 }
