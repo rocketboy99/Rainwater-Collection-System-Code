@@ -125,9 +125,11 @@ volatile int alarmMode = 0; //used to set tone
 //Misc.
 volatile float temperature = 0; //hold control module temperature
 
-//Software lockouts for electronic hardware
+//Software lockouts for electronic hardware and other shit-hit-the-fan situations
 volatile bool displayDisabled = false; 
-volatile bool RTC_Disabled = false; // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! update: auto recirculate function to accomidate this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+volatile bool RTC_Disabled = false;// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! update: auto recirculate function to accomidate this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+volatile bool RTC_SHTF = false;
 volatile bool AudibleWarningDisabled = false; 
 
 //Display
@@ -151,7 +153,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 void setup() {
 
 
-    // #################################################### Setup serial com link, OLED display and RTC module #########################################################
+    // #################################################### Setup serial com link and OLED display  #########################################################
     
     Serial.begin(115200);
     Wire.begin();
@@ -179,7 +181,8 @@ void setup() {
     
     delay(short_startup_steps_delay);
     lcdPrintLine = lcdPrintLine + 16;
-
+    
+    // ---------------------------------------------------------- Initialize RTC -------------------------------------------
 
     Serial.println("Connecting To RTC...");
     
@@ -188,8 +191,6 @@ void setup() {
     display.display();
     delay(short_startup_steps_delay);
     lcdPrintLine = lcdPrintLine + 16;
-    
-    // ---------------------------------------------------------- Initialize RTC -------------------------------------------
 
     if (!rtc.begin()) {
         Serial.println("RTC initialization failed!");
@@ -266,16 +267,35 @@ void setup() {
         
             
         //************************************************** RTC Accuracy Check ***********************************************************
+            if(now.year() == 2000){
+                //indicates that the RTC has lost time somehow
+                RTC_SHTF = true;
 
+                Serial.println("Initalizing UI Outputs and Running Test.  Verify every light turns on the buzzer sounds...");
+    
+                display.clearDisplay();
+                display.display();
+                lcdPrintLine = 0;
+    
+                display.setCursor(0, lcdPrintLine);
+                display.print("Minor issue...");
+                lcdPrintLine = lcdPrintLine + 16;
+                display.print("The RTC has lost set");
+                lcdPrintLine = lcdPrintLine + 16;
+                display.print("- Auto Recirc Set Def -");
+                display.display();
+
+                
+                delay(long_startup_steps_delay);
+
+                
+            }
         
         }
 
-    /*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check for missing display setup code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    
-
     //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Missing RTC Code !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-    */
+    
 
     // ######################################################### Pinmodes and Interupts ############################################################
 
@@ -284,7 +304,6 @@ void setup() {
     
     Serial.println("Initalizing UI Outputs and Running Test.  Verify every light turns on the buzzer sounds...");
     
-    // Display Time
     display.clearDisplay();
     display.display();
     lcdPrintLine = 0;
