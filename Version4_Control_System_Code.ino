@@ -73,6 +73,7 @@ const int pump_stop_delay = 500 // 0.5 second
 const int uv_light_delay = 2500 // 2.5 second
 const int short_startup_steps_delay = 750 // 0.75 second
 const int long_startup_steps_delay = 2500 // 2.5 seconds
+const int relay_startup_steps_delay = 1250 // 1.25 seconds
 
 //I2C Addresses:
 #define OLED_ADDRESS 0x3C //Display Address
@@ -433,13 +434,16 @@ void setup() {
 
     //-------------------------------------------------------- Setup relays and test functionality -----------------------------------------------------
     delay(short_startup_steps_delay);
+    display.clearDisplay();
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initializing...");
     
-    lcdPrintLine = 32;
-    Serial.println("Connecting to relays...");
+    lcdPrintLine = 16;
+    Serial.println("Testing Relays...");
     display.setTextSize(TextSize);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
-    display.print("Connecting to relays");
+    display.print("Testing Relays...");
     display.display();
 
     
@@ -454,17 +458,65 @@ void setup() {
     pinMode(MASTER_PWR_RELAY, OUTPUT);
 
     
-    digitalWrite(MASTER_PWR_RELAY, LOW); //prevents activation of system power durring relay test
+    digitalWrite(MASTER_PWR_RELAY, LOW); //prevents activation of system power during relay test
+        delay(relay_startup_steps_delay); 
     
-    pinMode(PWM_RELAY, OUTPUT);
-    pinMode(DISTRIBUTION_PUMP_RELAY, OUTPUT);
-    pinMode(RECIRCULATION_MODE_RELAY, OUTPUT);
-    pinMode(RECIRCULATION_VALVE_RELAY, OUTPUT);
-    pinMode(PURGE_VALVE_RELAY, OUTPUT);
-    pinMode(UV_LIGHT_RELAY, OUTPUT);
-    pinMode(TRANSFER_PUMP_RELAY, OUTPUT);
+    digitalWrite(TRANSFER_PUMP_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(PWM_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(DISTRIBUTION_PUMP_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(RECIRCULATION_MODE_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(RECIRCULATION_VALVE_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(PURGE_VALVE_RELAY, HIGH);
+        delay(relay_startup_steps_delay);
+    
+    digitalWrite(UV_LIGHT_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
 
+    lcdPrintLine = 32;
+    Serial.println("Test Complete, RST...");
+    display.setCursor(0, lcdPrintLine);
+    display.print("Test Complete, RST...");
+    display.display();
 
+    digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(PWM_RELAY, LOW);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(DISTRIBUTION_PUMP_RELAY, LOW);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(RECIRCULATION_MODE_RELAY, LOW);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(RECIRCULATION_VALVE_RELAY, LOW);
+        delay(relay_startup_steps_delay); 
+    
+    digitalWrite(PURGE_VALVE_RELAY, LOW);
+        delay(relay_startup_steps_delay);
+    
+    digitalWrite(UV_LIGHT_RELAY, LOW);
+        delay(relay_startup_steps_delay); 
+
+    lcdPrintLine = 48;
+    Serial.println("Main PWR On...");
+    display.setCursor(0, lcdPrintLine);
+    display.print("Main PWR On...");
+    display.display();
+
+    digitalWrite(MASTER_PWR_RELAY, HIGH); //activates system power
+        delay(relay_startup_steps_delay); 
     
 
     
@@ -479,7 +531,7 @@ void setup() {
     display.print("System Initialized");
     display.display();
     lcdPrintLine = 16;
-    Serial.println("Connecting UI Controls and Sensors...");
+    Serial.println("System Initialized...");
     display.setTextSize(TextSize);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, lcdPrintLine);
