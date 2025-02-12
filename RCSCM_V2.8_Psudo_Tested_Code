@@ -1,5 +1,16 @@
-// Control Module Code 2.8
-
+/**************************************************************
+*     Rainwater Processing System Control Module Firmware     *
+*                        Version 1.6                          *
+*                           Rev 0                             *
+*                       February 2025                         *
+*                                                             *
+*                    RainCycle Systems                        *
+*             Highline Technical Enterprises LLC              *
+*       Sole Intellectual Property of Andrew McMillian        *
+*                                                             *
+*                  Contact: 406-209-5710                      *
+*           highlinetechnicalenterprises@gmail.com            *
+***************************************************************/
 
 // -------------------------------------------------- Pin Assignments -------------------------------------------------- 
 
