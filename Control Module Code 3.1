@@ -1,0 +1,1460 @@
+// Control Module Code 3.1
+// All inputs active LOW and all outputs active HIGH
+
+// -------------------------------------------------- Pin Assignments -------------------------------------------------- 
+
+// User Interface Inputs
+#define MANUAL_STOP_RECIRCULATION 2
+#define MANUAL_PRIME_DISTRIBUTION_PUMP 4
+#define MANUAL_PRIME_TRANSFER_PUMP 12
+#define TRANSFER_PUMP_MODE_NORMAL 5
+#define TRANSFER_PUMP_MODE_MANUAL 6
+#define DISTRIBUTION_PUMP_MODE_NORMAL 7
+#define DISTRIBUTION_PUMP_MODE_MANUAL 8
+#define RECIRCULATION_FUNCTION_ENABLE 9
+#define SEDIMENT_PURGE_FUNCTION_NORMAL 10
+#define SEDIMENT_PURGE_FUNCTION_MANUAL 11
+
+// Indicator Light Assignments
+#define NORMAL_AUTO_INDICATOR 30
+#define TRANSFER_PUMP_ON_INDICATOR 31
+#define DISTRIBUTION_PUMP_ON_INDICATOR 32
+#define UV_LAMP_ON_INDICATOR 33
+#define NEW_WATER_PROCESS_INDICATOR 34
+#define ACCUMULATOR_UPPER_FLOAT_INDICATOR 35
+#define ACCUMULATOR_LOWER_FLOAT_INDICATOR 36
+#define STORAGE_UPPER_FLOAT_INDICATOR 37
+#define STORAGE_LOWER_FLOAT_INDICATOR 38
+#define DISTRIBUTION_PRESSURE_LOW_INDICATOR 39
+#define MASTER_CAUTION_INDICATOR 46
+
+//Warning Buzzer
+#define BUZZER 47
+
+// Sensors
+#define DISTRIBUTION_PRESSURE_SENSOR A0
+#define ACCUMULATOR_UPPER_FLOAT 14
+#define ACCUMULATOR_LOWER_FLOAT 15
+#define STORAGE_UPPER_FLOAT 16
+#define STORAGE_LOWER_FLOAT 17
+
+// Actuators (on 8 unit relay module)
+#define TRANSFER_PUMP_RELAY 22
+#define PWM_RELAY 23
+#define DISTRIBUTION_PUMP_RELAY 24
+#define RECIRCULATION_MODE_RELAY 25
+#define RECIRCULATION_VALVE_RELAY 26
+#define PURGE_VALVE_RELAY 27
+#define UV_LIGHT_RELAY 28
+#define MASTER_PWR_RELAY 29
+
+// -------------------------------------------------- Constants -------------------------------------------------- 
+
+//Time Constants
+const int refresh_rate = 100; //system refresh at 0.1 seconds (need to adjust to max while maintaining stability)
+const int TestingStepDelay = 1; //Set to 5000 (5 sec) if in testing mode or 1 if in normal mode
+
+const int RECIRCULATION_MODE_TIMEOUT = 1380000; // 23 minutes
+const int valve_operation_time = 6000; //6 seconds
+const int pump_stop_delay = 500; // 0.5 second
+const int uv_light_delay = 2500; // 2.5 second
+const int short_startup_steps_delay = 750; // 0.75 second
+const int long_startup_steps_delay = 2500; // 2.5 seconds
+const int relay_startup_steps_delay = 1250; // 1.25 seconds
+const int relayOff_startup_steps_delay = 500; // 0.5 seconds
+const int processing_refreshing_rate = 500; // 0.5 seconds
+const int serialprintreadoutdelay = 2000; // 0.5 seconds (infrequently used)
+
+//Distribution Pressure Sensor Threashold Values (this will require some experimentation to get dialed in)
+const int StandByPressure = 45;  //the pressure of the line when nothiung is drawing from it (pump cutoff pressure) (pressureState = 0)
+const int OverPressure = 65; //the pressure value that shuts down the distribtion pump from overpressure (pressureState = 4)
+const int PressureDrop_LineInUse = 4; //the pressure drop that triggers the recirculation valve to close (pressureState = 1)
+const int PressureDrop_PressureLow = 20; //the pressure drop indicating something is not right (pressureState = 2)
+const int PressureDrop_LineBreak = 35; //the pressure drop indicating a broken pipe and shutting down the distribtion pump (pressureState = 3)
+
+
+//I2C Addresses:
+#define OLED_ADDRESS 0x3C //Display Address
+#define RTC_ADDR 0x68 //Real Time Clock Address
+
+#define SCREEN_WIDTH 128  // OLED display width, in pixels
+#define SCREEN_HEIGHT 64  // OLED display height, in pixels
+
+// -------------------------------------------------- Global Variables -------------------------------------------------- 
+
+//Serial com selection
+volatile bool printControlStatesToSerialEnabled;
+volatile bool printSensorStatesToSerialEnabled;
+
+//float switch error flags
+volatile bool ACCUMULATOR_tank_float_error;
+volatile bool STORAGE_tank_float_error;
+
+//other error flags
+volatile bool IO_Error;  //is set to true when an electrical fault with the control inputs is detected
+
+//a low pressure condition will exist on startup that must be ignored, find a way to fix this before setting up the pressure lockout
+volatile int pressureState; // 0 = idle, 1 = LineInUse; 2 = PressureLow; 3 = LineBrake; 4 = OverPressure
+
+
+//tank levels
+volatile bool ACCUMULATOR_Tank_Full;
+volatile bool ACCUMULATOR_Tank_Empty;
+volatile bool STORAGE_Tank_Full;
+volatile bool STORAGE_Tank_Empty;
+
+volatile bool distribution_Line_Pressure_Low;
+
+//Action states
+volatile bool newWaterProcessing;
+volatile bool UVlightActive;
+volatile bool recirculationValveOpen;
+volatile bool purgeValveOpen;
+volatile bool recirculationActive;
+volatile bool manualExitTriggered;
+volatile bool autoExitTriggered;
+volatile bool transferPumpDryRun;
+volatile bool distributionPumpDryRun;
+volatile bool recirculationModeActive;
+volatile bool recirculationModePending;
+volatile bool recirculationModeBlockTransferPump;
+volatile unsigned long recirculationModeTimeOfRequestedAction;
+volatile unsigned long recirculationModeRunTime;
+
+
+// Global State Variables for Control Modes
+volatile bool Normal_UI_Config;
+
+volatile bool manualPrimeTransferPumpActive;
+volatile bool manualPrimeDistributionPumpActive;
+volatile bool manualStopRecirculationActive;
+
+volatile bool distributionPumpActive;
+volatile bool transferPumpActive;
+
+volatile bool transferPumpModeNormal;
+volatile bool transferPumpModeDisabled;
+volatile bool transferPumpModeManual;
+
+volatile bool distributionPumpModeNormal;
+volatile bool distributionPumpModeDisabled;
+volatile bool distributionPumpModeManual;
+
+volatile bool recirculationFunctionNormal;
+volatile bool recirculationFunctionDisabled;
+
+volatile bool sedimentScreenPurgeNormal;
+volatile bool sedimentScreenPurgeDisabled;
+volatile bool sedimentScreenPurgeManual;
+
+volatile int currentControlState;
+volatile int previousControlState;
+volatile bool currentControlStateIsPreviousState;
+
+//System Alarm States (for audible buzzer and the master caution light)
+volatile bool alarmState;
+volatile int alarmMode;
+volatile bool RTC_SHTF;
+volatile bool Master_Caution_On;
+
+//Misc.
+volatile float temperature;
+volatile float PSI;
+
+//Software lockouts for electronic hardware and other shit-hit-the-fan situations
+volatile bool displayDisabled;
+volatile bool RTC_Disabled;
+
+volatile bool AudibleWarningDisabled;
+
+//Display
+volatile int TextSize;
+volatile int lcdPrintLine;
+
+// -------------------------------------------------- Libraries -------------------------------------------------- 
+
+
+#include <Wire.h>
+#include <RTClib.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+
+//Create objects for RTC and OLED
+RTC_DS3231 rtc;
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+
+// -------------------------------------------------------- Functions Used In Startup Only ------------------------------------
+
+void whatWayIsTheWindBlowing(){ //sets everything to default values
+
+//Serial Com Selection (change these values for troubleshooting only)
+printControlStatesToSerialEnabled = true;
+printSensorStatesToSerialEnabled = true;
+
+//float switch error flags
+
+  ACCUMULATOR_tank_float_error = false;
+  STORAGE_tank_float_error = false;
+
+//tank levels
+
+  ACCUMULATOR_Tank_Full = false;
+  ACCUMULATOR_Tank_Empty = false;
+  STORAGE_Tank_Full = false;
+  STORAGE_Tank_Empty = false;
+
+  distribution_Line_Pressure_Low = false;
+
+//Action states
+
+  Normal_UI_Config = false;
+  newWaterProcessing = false;
+  UVlightActive = false;
+  recirculationValveOpen = false;
+  purgeValveOpen = false;
+  recirculationActive = false;
+  manualExitTriggered = false;
+  autoExitTriggered = false;
+  transferPumpDryRun = false;
+  distributionPumpDryRun = false;
+  recirculationModeActive = false;
+  recirculationModePending = false;
+  recirculationModeBlockTransferPump = false;
+  recirculationModeTimeOfRequestedAction = 0;
+  recirculationModeRunTime = 0;
+
+
+// Global State Variables for Control Modes
+
+  manualPrimeTransferPumpActive = false;
+  manualPrimeDistributionPumpActive = false;
+  manualStopRecirculationActive = false;
+  distributionPumpActive = false;
+  transferPumpActive = false;
+  transferPumpModeNormal = false;
+  transferPumpModeDisabled = false;
+  transferPumpModeManual = false;
+  distributionPumpModeNormal = false;
+  distributionPumpModeDisabled = false;
+  distributionPumpModeManual = false;
+  recirculationFunctionNormal = false;
+  recirculationFunctionDisabled = false;
+
+  sedimentScreenPurgeNormal = false;
+  sedimentScreenPurgeDisabled = false;
+  sedimentScreenPurgeManual = false;
+
+  currentControlState = 0; //sets the current state to idle
+  previousControlState = 0; //sets the previous state to idle
+  currentControlStateIsPreviousState = false;
+
+//System Alarm States (for audible buzzer and the master caution light)
+  alarmState = false;
+  Master_Caution_On = false;
+  alarmMode = 0; //used to set tone
+  IO_Error = false; //is set to true when an electrical fault with the control inputs is detected
+
+//Misc.
+  temperature = 0; //hold control module temperature
+  PSI = 0; //hold the distibtion line pressure
+  pressureState = 1;
+
+//Software lockouts for electronic hardware and other shit-hit-the-fan situations
+  displayDisabled = false; 
+  RTC_Disabled = false;// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! update: auto recirculate function to accomidate this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+  RTC_SHTF = false;
+  AudibleWarningDisabled = false; 
+
+//Display
+  TextSize = 1;
+  lcdPrintLine = 0;
+
+
+}
+ 
+  void comsUp(){  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Works Great on Test 1 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // #################################################### Setup serial com link and OLED display  #########################################################
+    
+    Serial.begin(115200);
+    Wire.begin();
+
+   // Initialize display
+    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
+        Serial.println("OLED display initialization failed!");
+        delay(100);
+        Serial.println("Trying Again...");
+         if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)){
+            Serial.println("Second display failure...disabling display");
+            displayDisabled = true; //display disabled from here on out
+         }
+    }
+
+    //Send a startup message
+    Serial.println("System Initializing..");
+    
+    display.clearDisplay();
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initializing..");
+    display.display();
+    
+    delay(short_startup_steps_delay);
+    lcdPrintLine = lcdPrintLine + 16;
+
+ }
+
+void when_TF_Am_I(){
+
+// ---------------------------------------------------------- Initialize RTC -------------------------------------------
+
+    Serial.println("Connecting To RTC...");
+    
+    display.setCursor(0, lcdPrintLine);
+    display.print("Connecting To RTC...");
+    display.display();
+    delay(long_startup_steps_delay);
+    lcdPrintLine = lcdPrintLine + 16;
+
+    if (!rtc.begin()) {
+        Serial.println("RTC initialization failed!");
+           
+        display.setCursor(0, lcdPrintLine);
+        display.print("RTC Failure...");
+        display.display();
+        delay(short_startup_steps_delay);
+        lcdPrintLine = lcdPrintLine + 16;
+        delay(100);
+        
+        Serial.println("Trying Again...");
+         if (!rtc.begin()){
+            Serial.println("Second RTC failure...disabling display");
+            
+            display.setCursor(0, lcdPrintLine);
+            display.print("Disabling RTC...");
+            display.display();
+            delay(short_startup_steps_delay);
+            lcdPrintLine = lcdPrintLine + 16;
+
+             RTC_Disabled = true; //RTC disabled from here on out (this changes the method for auto recirculation timing)
+             }
+        } else{
+                DateTime now = rtc.now();  // Get current date, time, and temperature
+                temperature = rtc.getTemperature();  // Get temperature from DS3231
+        
+
+             // Print to OLED Display
+             display.clearDisplay();
+             display.setTextSize(TextSize);
+             display.setTextColor(SSD1306_WHITE);
+             display.setCursor(0, 0);
+             display.print("System Initializing..");
+             display.setCursor(0, 16);
+             display.print("RTC Active");
+             display.display();
+
+             delay(long_startup_steps_delay);
+        
+             display.clearDisplay();
+             display.setTextSize(1);
+             display.setTextColor(SSD1306_WHITE);
+             display.setCursor(0, 0);
+
+             display.println("RTC Current Data:");
+               display.println("");
+             \
+             display.print("Date: ");
+             display.print(now.year());
+             display.print("/");
+             display.print(now.month());
+             display.print("/");
+             display.print(now.day());
+
+    
+             display.setCursor(0, 32);
+             display.print("Time: ");
+             display.print(now.hour());
+             display.print(":");
+             display.print(now.minute());
+             display.print(":");
+             display.print(now.second());
+
+             display.setCursor(0, 48);
+             display.print("Temp: ");
+             display.print(temperature);
+             display.print(" C");
+
+
+
+             display.display(); // Update OLED display
+
+             delay(long_startup_steps_delay);
+        
+            
+        //************************************************** RTC Accuracy Check ***********************************************************
+            if(now.year() == 2000){
+                //indicates that the RTC has lost time somehow
+                RTC_SHTF = true;
+
+                Serial.println("Initalizing UI Outputs and Running Test.  Verify every light turns on the buzzer sounds...");
+    
+                display.clearDisplay();
+                display.display();
+                lcdPrintLine = 0;
+    
+                display.setCursor(0, 16);
+                display.println("Minor issue...");
+                display.println("The RTC has lost set");
+                display.println("- Auto Recirc Set Def -");
+                display.display();
+
+                
+                delay(long_startup_steps_delay);
+
+                
+            }
+        
+        }
+
+    //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Missing RTC Code Goes Here !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+    
+}
+
+
+
+void A_Bit_Too_Flashy(){
+
+// ------------------------------------------------------------------ UI Output Initialization ---------------------------------------
+
+    
+    Serial.println("Initalizing UI Outputs and Running Test.  Verify every light turns on the buzzer sounds...");
+    
+    display.clearDisplay();   
+    display.setCursor(0, 0);
+    display.println("System Initializing..");
+    display.setCursor(0, 16);
+    display.println("Activating All UI Outputs...");
+    display.display();
+    delay(short_startup_steps_delay);
+
+    
+    //Indicactors and buzzer pin mode assignments
+    pinMode(TRANSFER_PUMP_ON_INDICATOR, OUTPUT);
+    pinMode(DISTRIBUTION_PUMP_ON_INDICATOR, OUTPUT);
+    pinMode(UV_LAMP_ON_INDICATOR, OUTPUT);
+    pinMode(NEW_WATER_PROCESS_INDICATOR, OUTPUT);
+    pinMode(ACCUMULATOR_UPPER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(ACCUMULATOR_LOWER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(STORAGE_UPPER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(STORAGE_LOWER_FLOAT_INDICATOR, OUTPUT);
+    pinMode(DISTRIBUTION_PRESSURE_LOW_INDICATOR, OUTPUT);
+    pinMode(MASTER_CAUTION_INDICATOR, OUTPUT);
+
+    pinMode(BUZZER, OUTPUT);
+
+    //Check to see if it all works
+
+    digitalWrite(NORMAL_AUTO_INDICATOR, HIGH);
+    digitalWrite(TRANSFER_PUMP_ON_INDICATOR, HIGH);
+    digitalWrite(DISTRIBUTION_PUMP_ON_INDICATOR, HIGH);
+    digitalWrite(UV_LAMP_ON_INDICATOR, HIGH);
+    digitalWrite(NEW_WATER_PROCESS_INDICATOR, HIGH);
+    digitalWrite(ACCUMULATOR_UPPER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(ACCUMULATOR_LOWER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(STORAGE_UPPER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(STORAGE_LOWER_FLOAT_INDICATOR, HIGH);
+    digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, HIGH);
+    digitalWrite(MASTER_CAUTION_INDICATOR, HIGH);
+
+    if(AudibleWarningDisabled == false){
+        tone(BUZZER, 500);
+        Serial.println("AudibleWarningDisabled == false");
+        display.setCursor(0, 32);
+        display.println("Verify:");
+        display.println("All Indicators ON?");
+        display.display();
+      }else{
+        Serial.println("AudibleWarningDisabled == true");
+        display.setCursor(0, 16);
+        display.println("All Lights ON");
+        display.println("Buzzer Disabled");
+        display.display();
+        
+      }
+
+    //Provide time to check UI outputs and then reset outputs and display
+    delay(long_startup_steps_delay*2);
+
+    lcdPrintLine = 0;
+    display.clearDisplay();
+
+    //turn everything off
+
+    noTone(BUZZER);
+
+    digitalWrite(NORMAL_AUTO_INDICATOR, LOW);
+    digitalWrite(TRANSFER_PUMP_ON_INDICATOR, LOW);
+    digitalWrite(DISTRIBUTION_PUMP_ON_INDICATOR, LOW);
+    digitalWrite(UV_LAMP_ON_INDICATOR, LOW);
+    digitalWrite(NEW_WATER_PROCESS_INDICATOR, LOW);
+    digitalWrite(ACCUMULATOR_UPPER_FLOAT_INDICATOR, LOW);
+    digitalWrite(ACCUMULATOR_LOWER_FLOAT_INDICATOR, LOW);
+    digitalWrite(STORAGE_UPPER_FLOAT_INDICATOR, LOW);
+    digitalWrite(STORAGE_LOWER_FLOAT_INDICATOR, LOW);
+    digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, LOW);
+    digitalWrite(MASTER_CAUTION_INDICATOR, LOW);
+
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initializing..");
+    display.display();
+    lcdPrintLine = 32;
+    Serial.println("Turning all indicators off...");
+    display.setCursor(0, lcdPrintLine);
+    display.println("Verify:");
+    display.println("All Indicators OFF?");
+    display.display();
+
+    //Provide time to check UI outputs are off
+    delay(short_startup_steps_delay);
+
+}
+
+void Can_You_Feel_It(){
+
+// ------------------------------------------------------------------ UI Input and Sensors Initialization ---------------------------------------
+    lcdPrintLine = 0;
+    display.clearDisplay();
+
+    Serial.println("Connecting UI Controls and Sensors...");
+
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initializing..");
+    display.display();
+    lcdPrintLine = 16;
+    display.println("Connecting UI");
+    display.println("Connecting Sensors");
+    display.display();
+
+    
+
+    //UI Controls
+
+    pinMode(MANUAL_STOP_RECIRCULATION, INPUT_PULLUP);
+    pinMode(MANUAL_PRIME_DISTRIBUTION_PUMP, INPUT_PULLUP);
+    pinMode(MANUAL_PRIME_TRANSFER_PUMP, INPUT_PULLUP);
+    pinMode(TRANSFER_PUMP_MODE_NORMAL, INPUT_PULLUP);
+    pinMode(TRANSFER_PUMP_MODE_MANUAL, INPUT_PULLUP);
+    pinMode(DISTRIBUTION_PUMP_MODE_NORMAL, INPUT_PULLUP);
+    pinMode(DISTRIBUTION_PUMP_MODE_MANUAL, INPUT_PULLUP);
+    pinMode(RECIRCULATION_FUNCTION_ENABLE, INPUT_PULLUP);
+    pinMode(SEDIMENT_PURGE_FUNCTION_NORMAL, INPUT_PULLUP);
+    pinMode(SEDIMENT_PURGE_FUNCTION_MANUAL, INPUT_PULLUP);
+
+    
+    //Float Switches
+
+    pinMode(ACCUMULATOR_UPPER_FLOAT, INPUT_PULLUP);
+    pinMode(ACCUMULATOR_LOWER_FLOAT, INPUT_PULLUP);
+    pinMode(STORAGE_UPPER_FLOAT, INPUT_PULLUP);
+    pinMode(STORAGE_LOWER_FLOAT, INPUT_PULLUP);
+    
+    //Other Sensors
+    //Add input mode here if swithing to a pressure switch from the pressure sensor
+
+}
+
+void Click_Click_Boom(){   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Works Great on Test 1 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    
+ //-------------------------------------------------------- Setup relays and test functionality -----------------------------------------------------
+    delay(short_startup_steps_delay);
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("System Initializing..");
+    
+    Serial.println("Testing Relays...");
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 32);
+    display.print("Testing Relays...");
+    display.display();
+
+    delay(short_startup_steps_delay); 
+
+    
+  //Outputs
+    pinMode(TRANSFER_PUMP_RELAY, OUTPUT);
+    pinMode(PWM_RELAY, OUTPUT);
+    pinMode(DISTRIBUTION_PUMP_RELAY, OUTPUT);
+    pinMode(RECIRCULATION_MODE_RELAY, OUTPUT);
+    pinMode(RECIRCULATION_VALVE_RELAY, OUTPUT);
+    pinMode(PURGE_VALVE_RELAY, OUTPUT);
+    pinMode(UV_LIGHT_RELAY, OUTPUT);
+    pinMode(MASTER_PWR_RELAY, OUTPUT);
+
+    
+    digitalWrite(MASTER_PWR_RELAY, LOW); //prevents activation of system power during relay test
+        delay(relay_startup_steps_delay); 
+    
+
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+
+  // TRANSFER_PUMP_RELAY test
+    Serial.println("TRANSFER_PUMP_RELAY On");
+    display.println("TRANSFER_PUMP_RLY");
+    display.display();
+
+    digitalWrite(TRANSFER_PUMP_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+
+  // PWM_RELAY test
+
+    Serial.println("PWM_RELAY On");
+    display.println("PWM_RELAY ON");
+    display.display();
+
+    
+    digitalWrite(PWM_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+
+
+  // DISTRIBUTION_PUMP_RELAY test
+
+    Serial.println("DISTRIBUTION_PUMP_RELAY ON");
+    display.println("DISTRIBUTION_P_RLY");
+    display.display();
+    
+    digitalWrite(DISTRIBUTION_PUMP_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+
+  // RECIRCULATION_MODE_RELAY test
+
+    Serial.println("RECIRCULATION_MODE_RELAY On");
+    display.println("RECIRC_MODE_RLY");
+    display.display();
+    
+    digitalWrite(RECIRCULATION_MODE_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+
+  // RECIRCULATION_VALVE_RELAY test
+
+    Serial.println("RECIRCULATION_VALVE_RELAY On");
+    display.println("RECIRC_VALVE_RLY");
+    display.display();
+    
+    digitalWrite(RECIRCULATION_VALVE_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+
+  // PURGE_VALVE_RELAY test
+
+    Serial.println("PURGE_VALVE_RELAY On");
+    display.println("PURGE_VALVE_RELAY");
+    display.display();
+    
+    digitalWrite(PURGE_VALVE_RELAY, HIGH);
+        delay(relay_startup_steps_delay);
+
+  // UV_LIGHT_RELAY test
+
+    Serial.println("UV_LIGHT_RELAY On");
+    display.println("UV_LIGHT_RELAY On");
+    display.display();
+    
+    digitalWrite(UV_LIGHT_RELAY, HIGH);
+        delay(relay_startup_steps_delay); 
+
+
+    // ------- Test Complete, Reset Everything --------
+
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("System Initializing.."); 
+    lcdPrintLine = 32;
+    Serial.println("Test Complete, RST...");
+    display.setCursor(0, lcdPrintLine);
+    display.print("Test Complete, RST...");
+    display.display();\
+
+    //Shut everything off
+
+    digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+        delay(relayOff_startup_steps_delay); 
+    
+    digitalWrite(PWM_RELAY, LOW);
+        delay(relayOff_startup_steps_delay); 
+    
+    digitalWrite(DISTRIBUTION_PUMP_RELAY, LOW);
+        delay(relayOff_startup_steps_delay); 
+    
+    digitalWrite(RECIRCULATION_MODE_RELAY, LOW);
+        delay(relayOff_startup_steps_delay); 
+    
+    digitalWrite(RECIRCULATION_VALVE_RELAY, LOW);
+        delay(relayOff_startup_steps_delay); 
+    
+    digitalWrite(PURGE_VALVE_RELAY, LOW);
+        delay(relayOff_startup_steps_delay);
+    
+    digitalWrite(UV_LIGHT_RELAY, LOW);
+        delay(relayOff_startup_steps_delay); 
+
+    // ---------------- Send update and arm the system by turning on the Master Power Relay ----------------
+
+    lcdPrintLine = 48;
+    Serial.println("System Armed...");
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Armed...");
+    display.display();
+
+    digitalWrite(MASTER_PWR_RELAY, HIGH); //activates system power
+      delay(relay_startup_steps_delay); 
+    
+   }
+
+   // -------------------------------------------------- Interrupt Service Routines -------------------------------------------------- 
+
+void exitRecirculationManual() {
+    Serial.println("Manual Exit: Recirculation Stopped");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Manual Exit: Recirc Stopped");
+    display.display();
+    closeRecirculationValve();
+    recirculationModeActive = false;
+    recirculationModePending = false;
+    recirculationModeBlockTransferPump = false;
+}
+
+void exitRecirculationAuto() {
+    Serial.println("Auto Exit: Recirculation Stopped (Pressure Switch)");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.print("Auto Exit: Recirc Stopped");
+    display.display();
+    closeRecirculationValve();
+    recirculationModeActive = false;
+    recirculationModePending = false;
+    recirculationModeBlockTransferPump = false;
+}
+
+void setup() {
+
+    whatWayIsTheWindBlowing(); //sets all global variables to default values
+
+    comsUp(); //Start the serial monitor and get the OLED display up and going
+        delay(TestingStepDelay);
+    when_TF_Am_I(); //Starts the RTC, checks to see if the readout is plausible and sets bypass flags it an error appears to be pressent
+       delay(TestingStepDelay); 
+   
+    A_Bit_Too_Flashy(); //Configures the indicator lights and runs operability test
+        delay(TestingStepDelay);
+   
+    Can_You_Feel_It(); //Configures user interface inputs and sensors
+       delay(TestingStepDelay);
+
+    Click_Click_Boom(); //Configures the relays and tests their operation.  
+       delay(TestingStepDelay);
+
+
+    lcdPrintLine = 0;
+    display.clearDisplay();
+
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("System Initialized");
+    display.display();
+    lcdPrintLine = 32;
+    Serial.println("Setup Complete...Now entering loop");
+    display.setTextSize(TextSize);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, lcdPrintLine);
+    display.print("All Systems Go...");
+    display.display();
+
+    delay(long_startup_steps_delay);
+
+    display.clearDisplay();
+    display.display();
+
+    //get the system up to normal pressure
+    //startDistributionPump();
+    delay(short_startup_steps_delay);
+
+
+} /* ______________________________________________________________ End of Setup() ___________________________________________________________________ */
+
+// Function to display text on OLED Primary and Serial Monitor (will soon also log to SD card)
+// Use the formate: showMessage("message", "display", 1); inwhich display is either primary or secondary and 1 is the text size
+/*
+void showMessage(const char *message, const char *displayType, int textSize) {
+    
+    Serial.println(message);  // Print to Serial Monitor
+
+    // Determine which display to update
+    Adafruit_SSD1306 *targetDisplay = nullptr;
+
+    if (strcmp(displayType, "primary") == 0) {
+        targetDisplay = &display;
+    } else if (strcmp(displayType, "secondary") == 0) {
+        targetDisplay = &display;
+    } else {
+        Serial.println("Error: Invalid display type! Use 'primary' or 'secondary'.");
+        return;
+    }
+
+    // Clear the selected display and print the message
+    targetDisplay->clearDisplay();
+    targetDisplay->setCursor(0, 0);
+    targetDisplay->setTextSize(textSize);   // Set the custom text size
+    targetDisplay->setTextColor(SSD1306_WHITE);
+    targetDisplay->print(message);
+    targetDisplay->display();
+}
+*/
+
+void updateIndicators() {
+    digitalWrite(TRANSFER_PUMP_ON_INDICATOR, transferPumpActive ? true : false);
+    digitalWrite(DISTRIBUTION_PUMP_ON_INDICATOR, distributionPumpActive ? true : false);
+    digitalWrite(UV_LAMP_ON_INDICATOR, UVlightActive ? true : false);
+    digitalWrite(NEW_WATER_PROCESS_INDICATOR, newWaterProcessing ? true : false);
+    digitalWrite(ACCUMULATOR_UPPER_FLOAT_INDICATOR, digitalRead(ACCUMULATOR_UPPER_FLOAT));
+    digitalWrite(ACCUMULATOR_LOWER_FLOAT_INDICATOR, digitalRead(ACCUMULATOR_LOWER_FLOAT));
+    digitalWrite(STORAGE_UPPER_FLOAT_INDICATOR, digitalRead(STORAGE_UPPER_FLOAT));
+    digitalWrite(STORAGE_LOWER_FLOAT_INDICATOR, digitalRead(STORAGE_LOWER_FLOAT));
+    digitalWrite(DISTRIBUTION_PRESSURE_LOW_INDICATOR, distribution_Line_Pressure_Low ? true : false);
+    digitalWrite(MASTER_CAUTION_INDICATOR, Master_Caution_On ? true : false);
+    digitalWrite(NORMAL_AUTO_INDICATOR,  Normal_UI_Config ? true : false);
+
+}
+
+void readControlStates() {
+
+  //Tranfer Pump Mode Switch [DPDT type ON-OFF-ON]
+    // Read Transfer Pump Mode Switch
+    int transferPumpModeNormalPin = digitalRead(TRANSFER_PUMP_MODE_NORMAL);
+    int transferPumpModeManualPin = digitalRead(TRANSFER_PUMP_MODE_MANUAL);
+    int transferpumpIO_Error = 0;
+
+    //transfer pump mode switch  
+    transferPumpModeNormal = (transferPumpModeNormalPin == LOW && transferPumpModeManualPin == HIGH);
+    transferPumpModeDisabled = (transferPumpModeNormalPin == HIGH && transferPumpModeManualPin == HIGH);
+    transferPumpModeManual = (transferPumpModeNormalPin == HIGH && transferPumpModeManualPin == LOW);
+    transferpumpIO_Error = (transferPumpModeNormalPin == LOW && transferPumpModeManualPin == LOW);
+
+  //Distribution Pump Mode switch
+
+    // Read Distribution Pump Mode Switch
+    int distributionPumpModeNormalPin = digitalRead(DISTRIBUTION_PUMP_MODE_NORMAL);
+    int distributionPumpModeManualPin = digitalRead(DISTRIBUTION_PUMP_MODE_MANUAL);
+    int distributionpumpIO_Error = 0;
+    
+    distributionPumpModeNormal = (distributionPumpModeNormalPin == LOW && distributionPumpModeManualPin == HIGH);
+    distributionPumpModeDisabled = (distributionPumpModeNormalPin == HIGH && distributionPumpModeManualPin == HIGH);
+    distributionPumpModeManual = (distributionPumpModeNormalPin == HIGH && distributionPumpModeManualPin == LOW);
+    distributionpumpIO_Error = (distributionPumpModeNormalPin == LOW && distributionPumpModeManualPin == LOW);
+
+
+  // Read Recirculation Function Switch
+    int recirculationEnablePin = digitalRead(RECIRCULATION_FUNCTION_ENABLE);
+    recirculationFunctionNormal = (recirculationEnablePin == LOW);
+    recirculationFunctionDisabled = (recirculationEnablePin == HIGH);
+
+  // Read Sediment Screen Purge Function Switch
+    int sedimentScreenPurgeNormalPin = digitalRead(SEDIMENT_PURGE_FUNCTION_NORMAL); 
+    int sedimentScreenPurgeManualPin = digitalRead(SEDIMENT_PURGE_FUNCTION_MANUAL);
+    int sedimentScreenPurgeIO_Error = 0;
+
+    sedimentScreenPurgeNormal = (sedimentScreenPurgeNormalPin == LOW && sedimentScreenPurgeManualPin == HIGH);
+    sedimentScreenPurgeManual = (sedimentScreenPurgeNormalPin == HIGH && sedimentScreenPurgeManualPin == LOW);
+    sedimentScreenPurgeDisabled = (sedimentScreenPurgeNormalPin == HIGH && sedimentScreenPurgeManualPin == HIGH);
+    sedimentScreenPurgeIO_Error = (sedimentScreenPurgeNormalPin == LOW && sedimentScreenPurgeManualPin == LOW);
+
+  // Read Manual Control Buttons
+    int manualStopRecirculation = digitalRead(MANUAL_STOP_RECIRCULATION);
+    int manualPrimeTransferPump = digitalRead(MANUAL_PRIME_TRANSFER_PUMP);
+    int manualPrimeDistributionPump = digitalRead(MANUAL_PRIME_DISTRIBUTION_PUMP);
+
+    manualExitTriggered = (manualStopRecirculation == HIGH);
+    manualPrimeTransferPumpActive = (manualPrimeTransferPump == HIGH);
+    manualPrimeDistributionPumpActive = (manualPrimeDistributionPump == HIGH);
+
+ // Check for error states
+  int IO_Error_val = 0;
+  IO_Error_val = transferpumpIO_Error + distributionpumpIO_Error + sedimentScreenPurgeIO_Error;
+  
+  if(IO_Error_val > 0){
+    IO_Error = true;
+  }else{
+    IO_Error = false;    
+  }
+
+}
+
+void determineControlMode() {  //should be integer returning based on swtiched case
+
+//Check for Normal Control Mode (ready to go) (REMEMBER THAT EVERYTHING IS ACTIVE LOW)
+if((IO_Error = false) && (transferPumpModeNormal == true) && (distributionPumpModeNormal == true) && (recirculationFunctionNormal == true) && (sedimentScreenPurgeNormal == true) && (manualPrimeTransferPumpActive == true) && (manualPrimeDistributionPumpActive == true)){ //yeah it needs work
+  Normal_UI_Config = true;
+}else {
+  Normal_UI_Config = false;
+}
+
+//Main (required a lot of revision)
+    // Reset the current state
+    currentControlState = 0;
+
+    // Check Transfer Pump Mode
+    if (transferPumpModeDisabled) {
+        currentControlState |= (1 << 0); // Bit 0 for disabled
+    } else if (transferPumpModeManual) {
+        currentControlState |= (1 << 1); // Bit 1 for manual
+    } else {
+        currentControlState |= (1 << 2); // Bit 2 for normal
+    }
+
+    // Check Distribution Pump Mode
+    if (distributionPumpModeDisabled) {
+        currentControlState |= (1 << 3); // Bit 3 for disabled
+    } else if (distributionPumpModeManual) {
+        currentControlState |= (1 << 4); // Bit 4 for manual
+    } else {
+        currentControlState |= (1 << 5); // Bit 5 for normal
+    }
+
+    // Check Recirculation Function
+    if (recirculationFunctionDisabled) {
+        currentControlState |= (1 << 6); // Bit 6 for disabled
+    } else {
+        currentControlState |= (1 << 7); // Bit 7 for normal
+    }
+
+    // Check Sediment Screen Purge Function
+    if (sedimentScreenPurgeDisabled) {
+        currentControlState |= (1 << 8); // Bit 8 for disabled
+    } else {
+        currentControlState |= (1 << 9); // Bit 9 for normal
+    }
+
+    // Check Manual Control Buttons
+    if (manualStopRecirculationActive) {
+        currentControlState |= (1 << 10); // Bit 10 for manual stop recirculation
+    }
+    if (manualPrimeTransferPumpActive) {
+        currentControlState |= (1 << 11); // Bit 11 for manual prime transfer pump
+    }
+    if (manualPrimeDistributionPumpActive) {
+        currentControlState |= (1 << 12); // Bit 12 for manual prime distribution pump
+    }
+
+
+    // ____________________________________________ Check to see if the control state has changed _________________________________________
+    if(previousControlState == currentControlState){ 
+        currentControlStateIsPreviousState = true;
+    }else{
+        previousControlState = currentControlState;
+        currentControlStateIsPreviousState = false;
+    }
+
+}
+
+// print the control state to the serial monitor
+void PrintControlStatesToSerial(){
+
+  if(printControlStatesToSerialEnabled == true){  // consider revising with the currentControlStateIsPreviousState variable to avoid printing redundant information
+
+    Serial.println(" ");
+    Serial.print("Control State Currently is:  ");
+    Serial.println(currentControlState);
+    delay(serialprintreadoutdelay);
+
+  }else{
+    //do nothing
+  }
+
+}
+
+//---------------------------------------------------------- Check Float Sensors ------------------------------------------------------------
+
+
+void CHECK_Sensors(){ //consider changing this funtion to an int so that the output could be encoded in a number rather than 6 bools
+
+//Check the float switch configuration for the accumulator tank
+
+   if(digitalRead((ACCUMULATOR_UPPER_FLOAT) == HIGH) && (ACCUMULATOR_LOWER_FLOAT) == HIGH){  // Full Tank
+    ACCUMULATOR_Tank_Full = true;
+    ACCUMULATOR_Tank_Empty = false;
+    ACCUMULATOR_tank_float_error = false; //reset error flag
+    // consider adding a trigger here for exiting the recirculation mode (or work that into the recirc mode code)
+
+   }else if(digitalRead((ACCUMULATOR_UPPER_FLOAT) == HIGH) && (ACCUMULATOR_LOWER_FLOAT) == LOW){ //error state in which upper float appearing as full tank but with the lower appearing as empty
+    ACCUMULATOR_Tank_Full = false;
+    ACCUMULATOR_Tank_Empty = true; //While not nessisarily true, this prevents damage to the pumps in this failure mode.
+    ACCUMULATOR_tank_float_error = true; //set error flag
+
+   }else if(digitalRead((ACCUMULATOR_UPPER_FLOAT) == LOW) && (ACCUMULATOR_LOWER_FLOAT) == LOW){ // Empty Tank
+    ACCUMULATOR_Tank_Full = false;
+    ACCUMULATOR_Tank_Empty = true;
+    ACCUMULATOR_tank_float_error = false;  //reset error flag
+
+   }else if(digitalRead((ACCUMULATOR_UPPER_FLOAT) == LOW) && (ACCUMULATOR_LOWER_FLOAT) == HIGH){ //PARTIALLY FULL STATE (MOST COMMON)
+    ACCUMULATOR_Tank_Full = false;
+    ACCUMULATOR_Tank_Empty = false;
+    ACCUMULATOR_tank_float_error = false;  //reset error flag   
+
+   }
+
+
+//Check the float switch configuration for the storage tank
+
+   if(digitalRead((STORAGE_UPPER_FLOAT) == HIGH) && (STORAGE_LOWER_FLOAT) == HIGH) {  // Full Tank
+    STORAGE_Tank_Full = true;
+    STORAGE_Tank_Empty = false;
+    STORAGE_tank_float_error = false; //reset error flag
+    // consider adding a trigger here for exiting the recirculation mode (or work that into the recirc mode code)
+
+   }else if(digitalRead((STORAGE_UPPER_FLOAT) == HIGH) && (STORAGE_LOWER_FLOAT) == LOW) { //error state in which upper float appearing as full tank but with the lower appearing as empty
+    STORAGE_Tank_Full = false;
+    STORAGE_Tank_Empty = true; //While not nessisarily true, this prevents damage to the pumps in this failure mode.
+    STORAGE_tank_float_error = true; //set error flag
+
+   }else if(digitalRead((STORAGE_UPPER_FLOAT) == LOW) && (STORAGE_LOWER_FLOAT) == LOW) { // Empty Tank
+    STORAGE_Tank_Full = false;
+    STORAGE_Tank_Empty = true;
+    STORAGE_tank_float_error = false;  //reset error flag
+
+   }else if(digitalRead((STORAGE_UPPER_FLOAT) == LOW) && (STORAGE_LOWER_FLOAT) == HIGH) { //PARTIALLY FULL STATE (MOST COMMON)
+    STORAGE_Tank_Full = false;
+    STORAGE_Tank_Empty = false;
+    STORAGE_tank_float_error = false;  //reset error flag   
+
+
+   }
+
+//Check the pressure sensor and update the pressure state
+  float raw_voltage;
+  int offset_voltage = 0.5;
+  int factor = 100;
+  float ADC_factor = 1023;
+
+
+  raw_voltage  =  (analogRead(DISTRIBUTION_PRESSURE_SENSOR)/ADC_factor);
+  PSI = (raw_voltage-offset_voltage)*factor;
+
+  if((PSI > (StandByPressure - PressureDrop_LineInUse)) && (PSI < OverPressure)){ //normal idle state
+    pressureState = 0;    
+    distribution_Line_Pressure_Low = false;
+  }else if((PSI <= (StandByPressure - PressureDrop_LineInUse)) && (PSI > (StandByPressure - PressureDrop_PressureLow))){ //line in use
+    pressureState = 1;    
+    distribution_Line_Pressure_Low = false; 
+  }else if((PSI <= (StandByPressure - PressureDrop_PressureLow)) && (PSI > (StandByPressure - PressureDrop_LineBreak))){ //low pressure
+    pressureState = 2;    
+    distribution_Line_Pressure_Low = true; 
+  }else if(PSI < (StandByPressure - PressureDrop_LineBreak)){ //line break suspected
+    pressureState = 3;    
+    distribution_Line_Pressure_Low = true; 
+  }else{                                                      //overpressure condition
+    pressureState = 4;    
+    distribution_Line_Pressure_Low = false; 
+  }
+}
+
+// print the sensor states to the serial monitor
+void PrintSensorStatesToSerial(){
+
+  if(printSensorStatesToSerialEnabled == true){  // consider revising with the currentControlStateIsPreviousState variable to avoid printing redundant information
+
+   Serial.println(" ");
+   Serial.println("Sensor States Currently Are:  ");
+ 
+   Serial.print("ACCUMULATOR_Tank_Full = ");
+   Serial.println(ACCUMULATOR_Tank_Full);
+ 
+   Serial.print("ACCUMULATOR_Tank_Empty = ");
+   Serial.println(ACCUMULATOR_Tank_Empty);
+
+   Serial.print("ACCUMULATOR_tank_float_error = ");
+   Serial.println(ACCUMULATOR_tank_float_error);
+
+   Serial.print("STORAGE_Tank_Full = ");
+   Serial.println(STORAGE_Tank_Full);
+
+   Serial.print("STORAGE_Tank_Empty = ");
+   Serial.println(STORAGE_Tank_Empty);
+ 
+   Serial.print("STORAGE_tank_float_error = ");
+   Serial.println(STORAGE_tank_float_error);
+
+   Serial.print("PSI = ");
+   Serial.println(PSI);
+   Serial.print("pressureState = ");
+   Serial.println(pressureState);
+
+   delay(serialprintreadoutdelay);
+
+  }else{
+    //do nothing
+  }
+
+}
+
+
+void CHECK_dryRunCutoff() {
+
+    if ((ACCUMULATOR_Tank_Empty == true)  && (transferPumpActive == true)) {
+        digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+         delay(pump_stop_delay);
+        transferPumpDryRun = true;
+        transferPumpActive = false;
+        Serial.println("Transfer Pump Dry Run Cutoff Triggered");
+        display.clearDisplay();
+        display.setCursor(0, 16);
+        display.print("TP Dry Run Cutoff");
+        display.display();
+    }
+
+    if ((STORAGE_Tank_Empty == true)  && (distributionPumpActive == true)) {
+        digitalWrite(DISTRIBUTION_PUMP_RELAY, LOW);
+         delay(pump_stop_delay);
+        distributionPumpDryRun = true;
+        distributionPumpActive = false;
+        Master_Caution_On = true;
+        Serial.println("Distribution Pump Dry Run Cutoff Triggered");
+        display.clearDisplay();
+        display.setCursor(0, 16);
+        display.print("DP Dry Run Cutoff");
+        display.display();
+    }
+}
+
+
+void stopUVLight() {
+    digitalWrite(UV_LIGHT_RELAY, LOW);
+    UVlightActive = false;
+    Serial.println("UV Light Stopped");
+    display.clearDisplay();
+    display.setCursor(0, 16);
+    display.print("UV Light Off");
+    display.display();
+}
+
+void startUVLight() {
+  digitalWrite(UV_LIGHT_RELAY, HIGH);
+  UVlightActive = true;
+
+  Serial.println("Starting UV Light");
+  display.clearDisplay();
+  display.setCursor(0, 16);
+  display.print("Starting UV Light");
+  display.display();
+
+  delay(uv_light_delay);
+
+  Serial.println("UV Light Started");
+  display.clearDisplay();
+  display.setCursor(0, 32);
+  display.print("UV Light On");
+  display.display();
+}
+
+
+void openRecirculationValve() {
+    digitalWrite(RECIRCULATION_VALVE_RELAY, HIGH);
+    Serial.println("Opening Recirculation Valve...");
+    display.clearDisplay();
+    display.setCursor(0, 16);
+    display.print("Opening Recir. Valve...");
+    display.display();
+    delay(valve_operation_time);
+    recirculationValveOpen = true;
+    Serial.println("Recirculation Valve Open");
+    display.clearDisplay();
+    display.setCursor(0, 32);
+    display.print("Recirc Valve Open");
+    display.display();
+}
+
+void closeRecirculationValve() {
+    digitalWrite(RECIRCULATION_VALVE_RELAY, LOW);
+    Serial.println("Closing Recirculation Valve...");
+    display.clearDisplay();
+    display.setCursor(0, 16);
+    display.print("Closing Recir. Valve...");
+    display.display();
+    delay(valve_operation_time);
+    recirculationValveOpen = false;
+    Serial.println("Recirculation Valve Closed");
+    display.clearDisplay();
+    display.setCursor(0, 32);
+    display.print("Recirc Valve Closed");
+    display.display();
+}
+
+void openPurgeValve() {
+    digitalWrite(PURGE_VALVE_RELAY, HIGH);
+    Serial.println("Opening Purge Valve...");
+    display.clearDisplay();
+    display.setCursor(0, 16);
+    display.print("Opening Purge. Valve...");
+    display.display();
+    delay(valve_operation_time);
+    purgeValveOpen = true;
+    Serial.println("Purge Valve Open");
+    display.clearDisplay();
+    display.setCursor(0, 32);
+    display.print("Purge Valve Open");
+    display.display();
+}
+
+void closePurgeValve() {
+    digitalWrite(PURGE_VALVE_RELAY, LOW);
+    Serial.println("Closing Purge Valve...");
+    display.clearDisplay();
+    display.setCursor(0, 16);
+    display.print("Closing Purge. Valve...");
+    display.display();
+    delay(valve_operation_time);
+    purgeValveOpen = false;
+    Serial.println("Purge Valve Closed");
+    display.clearDisplay();
+    display.setCursor(0, 32);
+    display.print("Purge Valve Closed");
+    display.display();
+}
+
+void stopTransferPump() {
+    digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+    transferPumpActive = false;
+    Serial.println("Transfer Pump Stopped");
+    display.setCursor(0, 32);
+    display.print("Transfer Pump Off");
+    display.display();
+    delay(pump_stop_delay);
+}
+
+void startTransferPump() {
+    if((recirculationValveOpen == true) && (transferPumpModeDisabled == false) && (transferPumpDryRun == false)){
+      closeRecirculationValve(); //IF THE RECIRCULATION VALVE IS OPEN, CLOSE IT
+      digitalWrite(TRANSFER_PUMP_RELAY, HIGH);
+      transferPumpActive = true;      
+      Serial.println("Transfer Pump Started");
+
+    }else if((transferPumpDryRun == false) && (transferPumpModeDisabled == false)){
+      digitalWrite(TRANSFER_PUMP_RELAY, HIGH);
+      transferPumpActive = true;
+      Serial.println("Transfer Pump Started");
+
+    }else if(transferPumpModeDisabled == true){
+      digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+      Serial.println("Transfer Pump Start Blocked By Mode Switch");
+      transferPumpActive = false;
+
+    }else if(transferPumpDryRun == true){
+      digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+      Serial.println("Transfer Pump Start Blocked By Dry Run Condition");
+      transferPumpActive = false;
+
+    }else{
+      digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+      Serial.println("Transfer Pump Start Blocked by both Dry Run Condition and Mode Switch");
+      transferPumpActive = false;   
+    }
+  }
+
+//
+
+void startDistributionPump() {
+    if((pressureState != 4) && (recirculationFunctionDisabled == true) && (recirculationValveOpen == true) && (distributionPumpModeDisabled == false) && (distributionPumpDryRun == false)){
+      closeRecirculationValve(); //IF THE RECIRCULATION VALVE IS OPEN, and it is not intended to be, CLOSE IT
+      digitalWrite(TRANSFER_PUMP_RELAY, HIGH);
+      distributionPumpActive = true;      
+      Serial.println("Distribution Pump Started");
+
+    }else if((pressureState != 4) &&(distributionPumpDryRun == false) && (distributionPumpModeDisabled == false)){
+      digitalWrite(TRANSFER_PUMP_RELAY, HIGH);
+      distributionPumpActive = true;
+      Serial.println("Distribution Pump Started");
+
+    }else if((pressureState != 4) &&(distributionPumpModeDisabled == true)){
+      digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+      Serial.println("Distribution Pump Start Blocked By Mode Switch");
+      distributionPumpActive = false;
+
+    }else if((pressureState != 4) &&(distributionPumpDryRun == true)){
+      digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+      Serial.println("Distribution Pump Start Blocked By Dry Run Condition");
+      distributionPumpActive = false;
+
+    }else if(pressureState = 4){
+      digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+      Serial.println("Distribution Pump Start Blocked By OverPressure Condition");
+      distributionPumpActive = false;
+
+    }else{
+      digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+      Serial.println("Distribution Pump Start Blocked by both Dry Run Condition and Mode Switch");
+      distributionPumpActive = false;   
+    }
+
+}
+
+
+void stopDistributionPump() {
+    digitalWrite(TRANSFER_PUMP_RELAY, LOW);
+    distributionPumpActive = false;
+    Serial.println("Distribution Pump Stopped");
+    display.setCursor(0, 32);
+    display.print("Distribution Pump Off");
+    display.display();
+    delay(pump_stop_delay);
+}
+
+
+/*
+
+void recirculationMode() { //this needs a lot of work
+
+ This shit stinks
+
+
+//verify that the mode is allowed to be operated and exit if not
+if(recirculationFunctionDisabled == false){
+    //send a system flag and exit
+    return;
+}else if(1){
+
+}
+
+//____________________________________________ consider waiting rather than cutting the transfer pump ______________________________________________
+//turn off the transfer pump, if needed, to prevent exceeding flow rate limit
+    if(transferPumpActive == true){
+       stopTransferPump();
+    } else {
+      while((some expression regarding runtime) && (UI state thing) && (pressureState = 0))
+        startUVLight();
+        openRecirculationValve();
+    
+        recirculationModePending = false;
+        recirculationModeBlockTransferPump = true;
+        recirculationModeActive = true;
+
+        // recirculationModeTimeOfRequestedAction = millis(); //needs work
+
+        Serial.println("Recirculation Mode Started");
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.print("Recirc Mode On");
+        display.display();
+    }
+
+    */
+  
+
+void updateDisplay() {
+    
+    display.clearDisplay();
+    display.setCursor(0, 0);
+
+    if(alarmState == false){
+    display.print("System: Normal");
+    }else{
+    display.print("System: Error State");
+    }
+
+    //this needs a lot of work __________________________________________________
+    display.setCursor(0, 16);
+    display.print("Something Important... ");
+    display.println(transferPumpActive ? "Yes" : "No");
+
+    display.display();
+}
+
+void Update_Warnings(){ //this sets warmings for error states as well as for a few other things
+  //check for error states, and set off alarms and warning lights if needed
+
+  if((pressureState >= 3) || (IO_Error == true) || (ACCUMULATOR_tank_float_error == true) || (STORAGE_tank_float_error == true)){
+    Master_Caution_On = true;
+    alarmState = true;
+  }else{
+    Master_Caution_On = false;
+    alarmState = false;
+  }
+}
+
+void Process_New_Water_If_Needed(){
+  if((recirculationModeBlockTransferPump == false) && (transferPumpModeDisabled == false) && (transferPumpDryRun == false) && (ACCUMULATOR_Tank_Full = true) && (ACCUMULATOR_Tank_Empty = false) && (ACCUMULATOR_tank_float_error = false)){
+    
+    //good to start processing new water
+    newWaterProcessing = true;
+    startUVLight();
+    startTransferPump();
+
+    while((transferPumpModeDisabled == false) && (transferPumpDryRun == false) && (ACCUMULATOR_Tank_Empty = false) && (ACCUMULATOR_tank_float_error = false)){
+      
+      //in this loop, the system just kills time waiting for an exit condition while performing important idle tasks
+      IdleActivities();
+      delay(processing_refreshing_rate);
+
+    }
+
+    //done processing new water
+    stopUVLight();
+    newWaterProcessing = false;
+    stopTransferPump();
+  }else{
+    //do nothing
+  }
+}
+
+void IdleActivities(){ // these are activites done in every mode state
+     
+  //Read Sensors and controls update variables relying on them
+  readControlStates();
+  determineControlMode();
+  CHECK_Sensors();
+  CHECK_dryRunCutoff();
+
+  //Update the control panel indicators, digital display and alarm buzzer
+  updateIndicators();
+  updateDisplay();
+  Update_Warnings();
+
+  //Print info the the serial monitor if each function is enabled
+  PrintSensorStatesToSerial();
+  PrintControlStatesToSerial();
+
+}
+
+
+void loop() {
+
+    IdleActivities();
+
+    startDistributionPump();
+    Process_New_Water_If_Needed();
+
+    
+
+
+    
+
+    
+    /* This needs work
+    if (recirculationModeActive && (delay(RECIRCULATION_MODE_TIMEOUT) - recirculationModeTimeOfRequestedAction > RECIRCULATION_MODE_TIMEOUT)) {
+        closeRecirculationValve(); // Close valve if timeout reached
+        recirculationModeActive = false;
+        Serial.println("Recirculation Mode Timeout");
+    }
+    */
+
+
+    
+    // Slow the program down a bit for stabilty
+    delay(refresh_rate);
+
+}
